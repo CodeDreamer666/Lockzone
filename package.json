@@ -1,0 +1,20 @@
+{
+  "name": "neon-duel",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "verify:movement": "node --experimental-strip-types scripts/verify-movement.mjs"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^8.2.0",
+    "@babylonjs/loaders": "^8.56.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}

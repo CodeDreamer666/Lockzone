@@ -1,0 +1,1 @@
+{"root":["./src/main.ts","./src/audio/audiomanager.ts","./src/bot/botcontroller.ts","./src/bot/botmanager.ts","./src/combat/weapon.ts","./src/game/game.ts","./src/game/playercontroller.ts","./src/game/gameconfig.ts","./src/game/movementmath.ts","./src/map/createmap.ts","./src/map/createmovementtestmap.ts","./src/ui/gameui.ts"],"version":"5.9.3"}

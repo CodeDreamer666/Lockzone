@@ -1,0 +1,92 @@
+{
+  "capturedAt": "2026-07-16T13:41:21.208Z",
+  "environment": "Babylon.js movement test scene in browser",
+  "frameRateResults": [
+    {
+      "frameRate": 30,
+      "fiveSecondDistanceMetres": 35.466666666666626,
+      "measuredSpeedMetresPerSecond": 7.199999999999984,
+      "requestedFrameDistanceMetres": 0.24,
+      "standingHeightMetres": 1.7
+    },
+    {
+      "frameRate": 60,
+      "fiveSecondDistanceMetres": 35.41111111111101,
+      "measuredSpeedMetresPerSecond": 7.19999999999999,
+      "requestedFrameDistanceMetres": 0.12,
+      "standingHeightMetres": 1.7
+    },
+    {
+      "frameRate": 120,
+      "fiveSecondDistanceMetres": 35.38166666666666,
+      "measuredSpeedMetresPerSecond": 7.199999999999989,
+      "requestedFrameDistanceMetres": 0.06,
+      "standingHeightMetres": 1.7
+    }
+  ],
+  "collisionResults": {
+    "directWall": {
+      "result": "VISIBLE WALL COLLISION",
+      "actualFrameDistanceMetres": 0,
+      "blockingMesh": "movement test visible wall",
+      "groundMesh": "movement test floor",
+      "grounded": true,
+      "standingHeightMetres": 1.7
+    },
+    "angledWall": {
+      "result": "SLIDING ALONG WALL",
+      "actualFrameDistanceMetres": 0.08485281374238518,
+      "blockingMesh": "movement test visible wall",
+      "groundMesh": "movement test floor",
+      "grounded": true,
+      "standingHeightMetres": 1.7
+    },
+    "movingAway": {
+      "result": "CLEAR",
+      "blockingMesh": "none",
+      "groundMesh": "movement test floor",
+      "grounded": true,
+      "standingHeightMetres": 1.7
+    },
+    "directionChanges": {
+      "result": "CLEAR",
+      "blockingMesh": "none",
+      "groundMesh": "movement test floor",
+      "grounded": true,
+      "standingHeightMetres": 1.7
+    }
+  },
+  "completeMapSpawnSmokeTest": {
+    "result": "CLEAR",
+    "requestedHeadingDegrees": 0,
+    "actualHeadingDegrees": 0,
+    "blockingMesh": "none",
+    "groundMesh": "district wet asphalt",
+    "groundNormal": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    },
+    "grounded": true,
+    "standingHeightMetres": 1.7
+  },
+  "representativeCompleteMapSmokeTest": {
+    "locationsTested": 10,
+    "directionalMovesTested": 40,
+    "movementCodeCancellations": 0,
+    "groundDetectionFailures": 0,
+    "unexpectedBlockingMeshes": 0,
+    "locations": [
+      "open south service road",
+      "warehouse aisle",
+      "container lane",
+      "administration interior",
+      "command interior",
+      "utility tunnel",
+      "utility hall aisle",
+      "warehouse observation deck",
+      "administration balcony",
+      "command observation platform"
+    ]
+  }
+}
