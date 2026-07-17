@@ -5,6 +5,7 @@ export class Weapon {
   isReloading = false;
   private lastShotAt = -Infinity;
   private reloadTimer?: number;
+  private reloadStageTimer?: number;
 
   canFire(now: number) {
     const shotIntervalMs = 60_000 / GAME_CONFIG.weapon.roundsPerMinute;
@@ -16,9 +17,13 @@ export class Weapon {
     this.lastShotAt = now;
     this.magazine--;
   }
-  reload(onDone: () => void) {
+  reload(onDone: () => void, onMagazineSeated?: () => void) {
     if (this.isReloading || this.magazine === GAME_CONFIG.weapon.magazineSize) return false;
     this.isReloading = true;
+    this.reloadStageTimer = window.setTimeout(() => {
+      this.reloadStageTimer = undefined;
+      onMagazineSeated?.();
+    }, GAME_CONFIG.weapon.reloadMs * 0.58);
     this.reloadTimer = window.setTimeout(() => {
       this.magazine = GAME_CONFIG.weapon.magazineSize;
       this.isReloading = false;
@@ -27,5 +32,8 @@ export class Weapon {
     }, GAME_CONFIG.weapon.reloadMs);
     return true;
   }
-  dispose() { if (this.reloadTimer !== undefined) window.clearTimeout(this.reloadTimer); }
+  dispose() {
+    if (this.reloadTimer !== undefined) window.clearTimeout(this.reloadTimer);
+    if (this.reloadStageTimer !== undefined) window.clearTimeout(this.reloadStageTimer);
+  }
 }

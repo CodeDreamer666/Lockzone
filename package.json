@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "verify:movement": "node --experimental-strip-types scripts/verify-movement.mjs"
+    "verify:movement": "node --experimental-strip-types scripts/verify-movement.mjs",
+    "verify:jump": "node --experimental-strip-types scripts/verify-jump.mjs",
+    "verify:props": "node --experimental-strip-types scripts/verify-pushable-props.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^8.2.0",

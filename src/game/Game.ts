@@ -10,6 +10,7 @@ import {
   MeshBuilder,
   PBRMaterial,
   Ray,
+  RenderTargetTexture,
   Scene,
   ShadowGenerator,
   StandardMaterial,
@@ -20,7 +21,11 @@ import { AudioManager } from "../audio/AudioManager";
 import { BotController } from "../bot/BotController";
 import { BotManager } from "../bot/BotManager";
 import { Weapon } from "../combat/Weapon";
-import { createMap } from "../map/createMap";
+import {
+  createMap,
+  type BulletMaterial,
+  type SurfaceType,
+} from "../map/createMap";
 import { createMovementTestMap } from "../map/createMovementTestMap";
 import { GameUI, type GraphicsPreset } from "../ui/GameUI";
 import { GAME_CONFIG } from "./gameConfig";
@@ -29,6 +34,7 @@ import {
   type MovementSnapshot,
 } from "./PlayerController";
 import { clampDeltaSeconds } from "./movementMath";
+import { PushablePropController } from "./PushablePropController";
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -50,6 +56,7 @@ export class Game {
   private keys = new Set<string>();
   private mouseDown = false;
   private playerController?: PlayerController;
+  private pushablePropController?: PushablePropController;
   private feedback = "Click Start to enter the arena";
   private sensitivity: number = GAME_CONFIG.camera.sensitivity;
   private weaponRig?: TransformNode;
@@ -57,7 +64,9 @@ export class Game {
   private shadowGenerator?: ShadowGenerator;
   private glowLayer?: GlowLayer;
   private recoil = 0;
-  private footstepAt = 0;
+  private footstepDistance = 0;
+  private currentSurface: SurfaceType = "asphalt";
+  private jumpQueued = false;
   private paused = false;
   private presentationTime = 0;
   private graphicsPreset: GraphicsPreset = "balanced";
@@ -87,6 +96,7 @@ export class Game {
     this.createScene();
     this.ui.showLoading(64, "Loading hostile units");
     this.audio.start();
+    this.audio.setPaused(false);
     try {
       await this.botManager?.loadModels();
       this.matchActive = true;
@@ -119,6 +129,10 @@ export class Game {
     this.regenerationActive = false;
     this.remaining = GAME_CONFIG.matchDurationSeconds;
     this.playerController = undefined;
+    this.pushablePropController = undefined;
+    this.jumpQueued = false;
+    this.footstepDistance = 0;
+    this.currentSurface = "asphalt";
     this.keys.clear();
     this.feedback = "Eliminate all ten opponents";
     this.mouseDown = false;
@@ -133,6 +147,7 @@ export class Game {
       this.cover,
       this.walkableSurfaces,
     );
+    this.pushablePropController = new PushablePropController(map.pushableProps, this.cover);
     this.createPlayerTarget();
     this.botManager = this.movementTestMode
       ? undefined
@@ -174,6 +189,7 @@ export class Game {
       ? createMovementTestMap(this.scene)
       : createMap(this.scene);
     map.cover.forEach((mesh) => shadows.addShadowCaster(mesh));
+    shadows.getShadowMap()!.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
     this.cover = map.cover;
     this.walkableSurfaces = map.walkableSurfaces;
     if (this.collisionDebugEnabled) this.createCollisionDebugVisuals();
@@ -221,20 +237,20 @@ export class Game {
 
   private createPresentationScene() {
     this.createEnvironmentScene(false);
-    this.camera = this.createCamera(new Vector3(-108, 10, -97));
+    this.camera = this.createCamera(new Vector3(-81, 9, -64));
     this.camera.checkCollisions = false;
     this.camera.fov = 0.95;
-    this.camera.setTarget(new Vector3(-73, 4, -45));
+    this.camera.setTarget(new Vector3(-52, 3, -25));
     this.presentationTime = 0;
     this.scene.onBeforeRenderObservable.add(() => {
       this.presentationTime += Math.min(this.engine.getDeltaTime() / 1000, 0.04);
       const t = this.presentationTime;
       const views = [
-        { position: new Vector3(-108, 10, -97), target: new Vector3(-73, 4, -45) },
-        { position: new Vector3(-100, 5.6, 29), target: new Vector3(-72, 3, 8) },
-        { position: new Vector3(57, 5, -66), target: new Vector3(81, 3, -45) },
-        { position: new Vector3(-17, 5.5, 2), target: new Vector3(0, 3, 22) },
-        { position: new Vector3(54, 3.7, 96), target: new Vector3(67, 2, 78) },
+        { position: new Vector3(-81, 9, -64), target: new Vector3(-52, 3, -25) },
+        { position: new Vector3(-79, 7, 32), target: new Vector3(-50, 3, 8) },
+        { position: new Vector3(-31, 6, -45), target: new Vector3(0, 3, -8) },
+        { position: new Vector3(24, 6, -42), target: new Vector3(55, 3, 5) },
+        { position: new Vector3(47, 4.2, 8), target: new Vector3(65, 2, 28) },
       ];
       const view = views[Math.floor(t / 7) % views.length];
       this.camera.position.copyFrom(view.position.add(new Vector3(Math.sin(t * 0.09) * 2, Math.sin(t * 0.14) * 0.5, Math.cos(t * 0.08) * 1.5)));
@@ -305,7 +321,7 @@ export class Game {
 
   private bindControls() {
     window.onkeydown = (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyR", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
       if (event.code === "F3" && this.collisionDebugAvailable) {
         this.toggleCollisionDebug();
         return;
@@ -320,6 +336,7 @@ export class Game {
       }
       if (!this.matchActive) return;
       this.keys.add(event.code);
+      if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyR") this.reload();
     };
     window.onkeyup = (event) => this.keys.delete(event.code);
@@ -347,7 +364,7 @@ export class Game {
     if (deltaSeconds === 0) return;
     const now = performance.now();
     this.remaining = Math.max(0, this.remaining - deltaSeconds);
-    this.movePlayer(deltaSeconds, now);
+    this.movePlayer(deltaSeconds);
     this.updatePlayerRegeneration(now, deltaSeconds);
     this.audio.setListener(this.camera.position);
     if (this.mouseDown) this.shoot(now);
@@ -379,23 +396,49 @@ export class Game {
     this.updateActiveContactDebug();
   }
 
-  private movePlayer(deltaSeconds: number, now: number) {
-    this.playerController?.update({
+  private movePlayer(deltaSeconds: number) {
+    const snapshot = this.playerController?.update({
       forward: this.keys.has("KeyW"),
       backward: this.keys.has("KeyS"),
       left: this.keys.has("KeyA"),
       right: this.keys.has("KeyD"),
+      jumpPressed: this.jumpQueued,
     }, deltaSeconds);
+    this.jumpQueued = false;
 
-    if (this.keys.has("KeyW") || this.keys.has("KeyA") || this.keys.has("KeyS") || this.keys.has("KeyD")) {
-      if (now <= this.footstepAt) return;
-      this.footstepAt = now + 390;
-      this.audio.play("footstep");
+    if (!snapshot) {
+      return;
+    }
+
+    this.pushablePropController?.update(
+      deltaSeconds,
+      this.camera.position,
+      snapshot.actualMovement,
+      snapshot.grounded,
+    );
+    this.currentSurface = surfaceTypeOf(snapshot.groundMesh);
+
+    if (snapshot.justLanded) {
+      this.audio.playLanding(this.currentSurface);
+      this.footstepDistance = 0;
+    }
+
+    if (snapshot.airborne || snapshot.actualDistance < 0.0005) {
+      return;
+    }
+
+    this.footstepDistance += snapshot.actualDistance;
+    const actualSpeed = snapshot.actualDistance / deltaSeconds;
+    const stepDistance = actualSpeed > 6.5 ? 2.05 : actualSpeed > 4 ? 2.25 : 2.45;
+    if (this.footstepDistance >= stepDistance) {
+      this.footstepDistance %= stepDistance;
+      this.audio.playFootstep(this.currentSurface);
     }
   }
 
   private clearMovementInput() {
     this.keys.clear();
+    this.jumpQueued = false;
   }
 
   private runAutomatedMovementChecks() {
@@ -473,11 +516,82 @@ export class Game {
     }
     const directionChangeResult = summarizeMovement(this.playerController.getSnapshot());
 
+    const runJumpScenario = (
+      name: string,
+      start: Vector3,
+      inputAtFrame: (frame: number) => {
+        forward: boolean;
+        backward: boolean;
+        left: boolean;
+        right: boolean;
+        jumpPressed: boolean;
+      },
+      frameCount = 120,
+    ) => {
+      this.camera.position.copyFrom(start);
+      this.camera.rotation.set(0, 0, 0);
+      this.playerController!.reset();
+      const groundHeight = this.camera.position.y;
+      let peakHeight = groundHeight;
+      let landingCount = 0;
+
+      for (let frame = 0; frame < frameCount; frame += 1) {
+        const snapshot = this.playerController!.update(inputAtFrame(frame), 1 / 60);
+        peakHeight = Math.max(peakHeight, snapshot.playerPosition.y);
+        if (snapshot.justLanded) landingCount += 1;
+      }
+
+      const snapshot = this.playerController!.getSnapshot();
+      return {
+        airborne: snapshot.airborne,
+        finalHeight: snapshot.playerPosition.y,
+        groundHeight,
+        landed: snapshot.grounded,
+        landingCount,
+        name,
+        peakJumpHeight: peakHeight - groundHeight,
+      };
+    };
+    const idleJumpInput = (frame: number) => ({
+      forward: false,
+      backward: false,
+      left: false,
+      right: false,
+      jumpPressed: frame === 0,
+    });
+    const jumpResults = [
+      runJumpScenario("standing jump", spawn, idleJumpInput),
+      runJumpScenario("running jump", spawn, (frame) => ({
+        ...forwardInput,
+        jumpPressed: frame === 0,
+      })),
+      runJumpScenario("double jump rejected", spawn, (frame) => ({
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        jumpPressed: frame === 0 || frame === 12,
+      })),
+      runJumpScenario("held jump does not repeat", spawn, () => ({
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        jumpPressed: true,
+      }), 180),
+      runJumpScenario(
+        "low ceiling stops ascent",
+        new Vector3(0, GAME_CONFIG.player.standingHeight, -7),
+        idleJumpInput,
+      ),
+    ];
+
     const evidence = {
       angledWallResult,
       directWallResult,
       directionChangeResult,
       frameRateResults,
+      jumpResults,
       movingAwayResult,
     };
     (window as Window & { __neonDuelMovementEvidence?: typeof evidence })
@@ -498,16 +612,17 @@ export class Game {
     });
 
     const locations = [
-      { name: "open south service road", x: -18, z: -80 },
-      { name: "warehouse aisle", x: -86, z: 16 },
-      { name: "container lane", x: -90, z: -70 },
-      { name: "administration interior", x: 76, z: -50 },
-      { name: "command interior", x: 10, z: 22 },
-      { name: "utility tunnel", x: 13, z: 83 },
-      { name: "utility hall aisle", x: 65, z: 83 },
-      { name: "warehouse observation deck", x: -52, z: 19 },
-      { name: "administration balcony", x: 76, z: -24 },
-      { name: "command observation platform", x: 0, z: 22 },
+      { name: "container yard arrival", x: -73, z: -53 },
+      { name: "container passage", x: -62, z: -17 },
+      { name: "yard loading apron", x: -61, z: 32 },
+      { name: "warehouse receiving", x: 0, z: -41 },
+      { name: "warehouse central aisle", x: 3, z: -9 },
+      { name: "warehouse office route", x: 14, z: 13 },
+      { name: "warehouse north connector", x: -5, z: 29 },
+      { name: "command exposed checkpoint", x: 39, z: -38 },
+      { name: "command records corridor", x: 57, z: 8 },
+      { name: "central command room", x: 56, z: 25 },
+      { name: "command security catwalk", x: 37, z: 24 },
     ];
     const directions = [
       {
@@ -568,7 +683,7 @@ export class Game {
     document.documentElement.dataset.mapMovementEvidence = JSON.stringify(evidence);
     console.info("Neon Duel complete-map movement smoke verification", evidence);
 
-    this.camera.position.set(-110, GAME_CONFIG.player.standingHeight, -68);
+    this.camera.position.set(-74, GAME_CONFIG.player.standingHeight, -56);
     this.camera.rotation.set(0, 0, 0);
     this.playerController.reset();
   }
@@ -752,6 +867,7 @@ export class Game {
     this.paused = true;
     this.mouseDown = false;
     this.clearMovementInput();
+    this.audio.setPaused(true);
     document.exitPointerLock();
     this.ui.showPause({
       onResume: () => this.resumeMatch(),
@@ -765,6 +881,7 @@ export class Game {
   private resumeMatch() {
     if (!this.matchActive || !this.paused) return;
     this.paused = false;
+    this.audio.setPaused(false);
     this.feedback = "Click the game view to enable mouse look";
     this.ui.showHud();
     this.updateCollisionDebugReadout(performance.now());
@@ -785,13 +902,14 @@ export class Game {
 
   private shoot(now: number) {
     if (this.weapon.magazine === 0) {
+      this.audio.play("empty");
       this.reload();
       return;
     }
     if (!this.weapon.canFire(now)) return;
     this.weapon.fire(now);
     this.botManager?.reportPlayerGunshot(this.camera.position, now);
-    this.audio.play("shot");
+    this.audio.playGunshot(this.currentSurface === "indoor");
     this.recoil = Math.min(0.12, this.recoil + GAME_CONFIG.weapon.recoilPerShot);
     this.camera.rotation.x -= GAME_CONFIG.weapon.recoilPerShot;
     this.flashMuzzle();
@@ -800,15 +918,23 @@ export class Game {
     direction.x += (Math.random() - 0.5) * spread;
     direction.y += (Math.random() - 0.5) * spread;
     const ray = new Ray(this.camera.position, direction.normalize(), GAME_CONFIG.weapon.range);
-    const hit = this.scene.pickWithRay(ray, (mesh) => this.botManager?.getBotByMesh(mesh) !== undefined || this.cover.some((wall) => wall === mesh));
+    const hit = this.scene.pickWithRay(ray, (mesh) => (
+      this.botManager?.getBotByMesh(mesh) !== undefined
+      || this.cover.some((wall) => wall === mesh)
+      || this.pushablePropController?.hasMesh(mesh) === true
+    ));
     const bot = hit?.pickedMesh ? this.botManager?.getBotByMesh(hit.pickedMesh) : undefined;
     if (bot) {
       bot.takeDamage(GAME_CONFIG.weapon.damage, now);
       this.audio.play("hit", bot.mesh.position);
       this.feedback = bot.isAlive ? "Hit confirmed" : `Bot eliminated — ${this.botManager?.remaining ?? 0} remaining`;
-      this.impact(hit!.pickedPoint!, true);
+      this.impact(hit!.pickedPoint!, true, "concrete");
     } else if (hit?.pickedPoint) {
-      this.impact(hit.pickedPoint, false);
+      const bulletMaterial = bulletMaterialOf(hit.pickedMesh ?? undefined);
+      if (hit.pickedMesh && this.pushablePropController?.hasMesh(hit.pickedMesh)) {
+        this.pushablePropController.applyBulletImpulse(hit.pickedMesh, direction);
+      }
+      this.impact(hit.pickedPoint, false, bulletMaterial);
     }
   }
 
@@ -817,22 +943,32 @@ export class Game {
     window.setTimeout(() => this.muzzleFlash?.setEnabled(false), 45);
   }
 
-  private impact(position: Vector3, combatant: boolean) {
+  private impact(position: Vector3, combatant: boolean, bulletMaterial: BulletMaterial) {
     const mark = MeshBuilder.CreateSphere("bullet impact", { diameter: combatant ? 0.15 : 0.09 }, this.scene);
     mark.position.copyFrom(position);
     const material = new StandardMaterial("impact material", this.scene);
-    material.emissiveColor = combatant ? new Color3(1, 0.06, 0.03) : new Color3(1, 0.62, 0.18);
+    material.emissiveColor = combatant
+      ? new Color3(1, 0.06, 0.03)
+      : bulletMaterial === "metal"
+        ? new Color3(1, 0.72, 0.26)
+        : bulletMaterial === "wood"
+          ? new Color3(0.62, 0.28, 0.08)
+          : new Color3(0.78, 0.7, 0.54);
     mark.material = material;
+    if (!combatant) this.audio.playImpact(bulletMaterial, position);
     window.setTimeout(() => mark.dispose(), 220);
   }
 
   private reload() {
-    if (this.weapon.reload(() => {
-      this.feedback = "Reloaded";
-      this.audio.play("reload");
-    })) {
+    if (this.weapon.reload(
+      () => {
+        this.feedback = "Reloaded";
+        this.audio.playReload("complete");
+      },
+      () => this.audio.playReload("magazine"),
+    )) {
       this.feedback = "Reloading…";
-      this.audio.play("reload");
+      this.audio.playReload("start");
     }
   }
 
@@ -872,6 +1008,18 @@ export class Game {
 
 function formatHeading(value: number) {
   return `${value.toFixed(1)}°`;
+}
+
+function surfaceTypeOf(mesh?: AbstractMesh): SurfaceType {
+  const surface = mesh?.metadata?.surfaceType;
+  return surface === "concrete" || surface === "indoor" || surface === "metal"
+    ? surface
+    : "asphalt";
+}
+
+function bulletMaterialOf(mesh?: AbstractMesh): BulletMaterial {
+  const material = mesh?.metadata?.bulletMaterial;
+  return material === "metal" || material === "wood" ? material : "concrete";
 }
 
 function formatVector(vector: Vector3) {

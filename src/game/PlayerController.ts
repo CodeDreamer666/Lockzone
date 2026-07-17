@@ -8,6 +8,7 @@ import {
 import { GAME_CONFIG } from "./gameConfig";
 import {
   calculateDesiredHorizontalVelocity,
+  integrateVerticalMotion,
   moveHorizontalVelocityToward,
   type MovementInput,
 } from "./movementMath";
@@ -17,12 +18,17 @@ const WALKABLE_COLLISION_GROUP = 0x2;
 const MINIMUM_WALKABLE_NORMAL_Y = 0.55;
 const MAXIMUM_STEP_UP = 0.45;
 const MAXIMUM_GROUND_DROP = 6;
-const DIRECT_GROUND_SNAP_DISTANCE = 0.35;
-const GROUND_DESCENT_SPEED = 14;
+const DIRECT_GROUND_SNAP_DISTANCE = MAXIMUM_STEP_UP;
 const COLLISION_DISTANCE_TOLERANCE = 0.98;
 const HARD_BLOCK_RATIO = 0.1;
 const SLIDE_ANGLE_DEGREES = 12;
 const SPEED_SAMPLE_SECONDS = 2;
+const GROUND_CONTACT_TOLERANCE = 0.07;
+const LANDING_TOLERANCE = 0.08;
+
+export interface PlayerMovementInput extends MovementInput {
+  jumpPressed?: boolean;
+}
 
 export type MovementResult =
   | "CLEAR"
@@ -35,6 +41,7 @@ export type MovementResult =
   | "UNKNOWN HARD BLOCK";
 
 export interface MovementSnapshot {
+  airborne: boolean;
   actualDistance: number;
   actualHeading: number;
   actualMovement: Vector3;
@@ -47,6 +54,7 @@ export interface MovementSnapshot {
   groundMesh?: AbstractMesh;
   groundNormal?: Vector3;
   grounded: boolean;
+  justLanded: boolean;
   playerPosition: Vector3;
   positionBeforeMove: Vector3;
   requestedDistance: number;
@@ -57,6 +65,7 @@ export interface MovementSnapshot {
   speedSampleSeconds: number;
   velocityAfterCollision: Vector3;
   velocityBeforeCollision: Vector3;
+  verticalVelocity: number;
 }
 
 interface SpeedSample {
@@ -66,6 +75,12 @@ interface SpeedSample {
 
 export class PlayerController {
   private horizontalVelocity = Vector3.Zero();
+  private verticalVelocity = 0;
+  private grounded = false;
+  private jumpActive = false;
+  private jumpPressConsumed = false;
+  private justLanded = false;
+  private landingRecoveryRemaining = 0;
   private collidedMesh?: AbstractMesh;
   private speedSamples: SpeedSample[] = [];
   private sampledDistance = 0;
@@ -96,11 +111,26 @@ export class PlayerController {
       }
     };
 
+    const ground = this.snapToGround(0);
+    this.grounded = ground.grounded;
     this.snapshot = this.createIdleSnapshot();
-    this.snapToGround(0);
   }
 
-  update(input: MovementInput, deltaSeconds: number) {
+  update(input: PlayerMovementInput, deltaSeconds: number) {
+    this.justLanded = false;
+    this.landingRecoveryRemaining = Math.max(0, this.landingRecoveryRemaining - deltaSeconds);
+    if (!input.jumpPressed) {
+      this.jumpPressConsumed = false;
+    }
+    if (input.jumpPressed && !this.jumpPressConsumed) {
+      this.jumpPressConsumed = true;
+      if (this.grounded && this.landingRecoveryRemaining === 0) {
+        this.verticalVelocity = GAME_CONFIG.player.jumpInitialVelocity;
+        this.grounded = false;
+        this.jumpActive = true;
+      }
+    }
+
     const desiredVelocity = calculateDesiredHorizontalVelocity(
       input,
       this.camera.rotation.y,
@@ -111,13 +141,17 @@ export class PlayerController {
       },
     );
     const hasInput = desiredVelocity.x !== 0 || desiredVelocity.z !== 0;
-    const acceleration = hasInput
-      ? GAME_CONFIG.player.groundAcceleration
-      : GAME_CONFIG.player.groundDeceleration;
+    const acceleration = this.grounded
+      ? hasInput
+        ? GAME_CONFIG.player.groundAcceleration
+        : GAME_CONFIG.player.groundDeceleration
+      : hasInput
+        ? GAME_CONFIG.player.groundAcceleration * GAME_CONFIG.player.airControlMultiplier
+        : 0;
     const velocityBeforeCollision = this.horizontalVelocity.clone();
     const nextVelocity = moveHorizontalVelocityToward(
       this.horizontalVelocity,
-      desiredVelocity,
+      !this.grounded && !hasInput ? this.horizontalVelocity : desiredVelocity,
       acceleration * deltaSeconds,
     );
 
@@ -149,7 +183,7 @@ export class PlayerController {
       );
     }
 
-    const ground = this.snapToGround(deltaSeconds);
+    const ground = this.updateVertical(deltaSeconds);
     const deflectionDegrees = angleBetweenHorizontal(requestedMovement, actualMovement);
     const result = classifyMovement({
       actualDistance,
@@ -157,11 +191,13 @@ export class PlayerController {
       deflectionDegrees,
       groundDetected: ground.detected,
       grounded: ground.grounded,
+      airborne: !this.grounded,
       requestedDistance,
     });
 
     this.recordSpeed(actualDistance, deltaSeconds);
     this.snapshot = {
+      airborne: !this.grounded,
       actualDistance,
       actualHeading: headingOf(actualMovement),
       actualMovement,
@@ -181,7 +217,8 @@ export class PlayerController {
       deflectionDegrees,
       groundMesh: ground.mesh,
       groundNormal: ground.normal,
-      grounded: ground.grounded,
+      grounded: this.grounded,
+      justLanded: this.justLanded,
       playerPosition: this.camera.position.clone(),
       positionBeforeMove,
       requestedDistance,
@@ -192,6 +229,7 @@ export class PlayerController {
       speedSampleSeconds: this.sampledSeconds,
       velocityAfterCollision: this.horizontalVelocity.clone(),
       velocityBeforeCollision,
+      verticalVelocity: this.verticalVelocity,
     };
 
     return this.snapshot;
@@ -203,15 +241,103 @@ export class PlayerController {
 
   reset() {
     this.horizontalVelocity.setAll(0);
+    this.verticalVelocity = 0;
+    this.grounded = false;
+    this.jumpActive = false;
+    this.jumpPressConsumed = false;
+    this.justLanded = false;
+    this.landingRecoveryRemaining = 0;
     this.speedSamples = [];
     this.sampledDistance = 0;
     this.sampledSeconds = 0;
     this.collidedMesh = undefined;
-    this.snapToGround(0);
+    this.grounded = this.snapToGround(0).grounded;
     this.snapshot = this.createIdleSnapshot();
   }
 
+  private updateVertical(deltaSeconds: number) {
+    if (this.grounded) {
+      const ground = this.snapToGround(deltaSeconds);
+      if (ground.grounded) {
+        this.verticalVelocity = 0;
+        return ground;
+      }
+      this.grounded = false;
+      this.jumpActive = true;
+    }
+
+    const verticalMotion = integrateVerticalMotion(
+      this.verticalVelocity,
+      GAME_CONFIG.player.gravity,
+      deltaSeconds,
+    );
+    this.verticalVelocity = verticalMotion.velocity;
+    const beforeVerticalMove = this.camera.position.y;
+    this.collidedMesh = undefined;
+    this.camera._collideWithWorld(new Vector3(0, verticalMotion.displacement, 0));
+    const actualVerticalMovement = this.camera.position.y - beforeVerticalMove;
+
+    if (
+      verticalMotion.displacement > 0
+      && actualVerticalMovement < verticalMotion.displacement * COLLISION_DISTANCE_TOLERANCE
+    ) {
+      this.verticalVelocity = Math.min(0, this.verticalVelocity);
+    }
+
+    const ground = this.findGround();
+    if (this.verticalVelocity <= 0 && ground.targetCameraHeight !== undefined) {
+      if (this.camera.position.y <= ground.targetCameraHeight + LANDING_TOLERANCE) {
+        this.camera.position.y = ground.targetCameraHeight;
+        this.verticalVelocity = 0;
+        this.grounded = true;
+        this.justLanded = this.jumpActive;
+        this.jumpActive = false;
+        this.landingRecoveryRemaining = GAME_CONFIG.player.landingRecoverySeconds;
+      }
+    }
+
+    return {
+      detected: ground.detected,
+      grounded: this.grounded,
+      mesh: ground.mesh,
+      normal: ground.normal,
+    };
+  }
+
   private snapToGround(deltaSeconds: number) {
+    const ground = this.findGround();
+    if (!ground.mesh || ground.targetCameraHeight === undefined || !ground.normal) {
+      return {
+        detected: false,
+        grounded: false,
+        mesh: undefined,
+        normal: undefined,
+      };
+    }
+
+    const heightDifference = ground.targetCameraHeight - this.camera.position.y;
+    if (heightDifference > MAXIMUM_STEP_UP) {
+      return {
+        detected: false,
+        grounded: false,
+        mesh: undefined,
+        normal: undefined,
+      };
+    }
+
+    if (Math.abs(heightDifference) <= DIRECT_GROUND_SNAP_DISTANCE || deltaSeconds === 0) {
+      this.camera.position.y = ground.targetCameraHeight;
+    }
+
+    return {
+      detected: true,
+      grounded: Math.abs(this.camera.position.y - ground.targetCameraHeight) < GROUND_CONTACT_TOLERANCE,
+      mesh: ground.mesh,
+      normal: ground.normal,
+    };
+  }
+
+  private findGround() {
     const rayOrigin = this.camera.position.add(new Vector3(0, MAXIMUM_STEP_UP, 0));
     const rayLength = GAME_CONFIG.player.standingHeight
       + MAXIMUM_STEP_UP
@@ -238,38 +364,19 @@ export class PlayerController {
     if (!ground?.hit.pickedMesh || !ground.hit.pickedPoint || !ground.normal) {
       return {
         detected: false,
-        grounded: false,
         mesh: undefined,
         normal: undefined,
+        targetCameraHeight: undefined,
       };
     }
 
     const targetCameraHeight = ground.hit.pickedPoint.y + GAME_CONFIG.player.standingHeight;
-    const heightDifference = targetCameraHeight - this.camera.position.y;
-
-    if (heightDifference > MAXIMUM_STEP_UP) {
-      return {
-        detected: false,
-        grounded: false,
-        mesh: undefined,
-        normal: undefined,
-      };
-    }
-
-    if (Math.abs(heightDifference) <= DIRECT_GROUND_SNAP_DISTANCE || deltaSeconds === 0) {
-      this.camera.position.y = targetCameraHeight;
-    } else if (heightDifference < 0) {
-      this.camera.position.y = Math.max(
-        targetCameraHeight,
-        this.camera.position.y - GROUND_DESCENT_SPEED * deltaSeconds,
-      );
-    }
 
     return {
       detected: true,
-      grounded: Math.abs(this.camera.position.y - targetCameraHeight) < 0.05,
       mesh: ground.hit.pickedMesh,
       normal: ground.normal,
+      targetCameraHeight,
     };
   }
 
@@ -316,6 +423,7 @@ export class PlayerController {
     const ground = this.snapToGround(0);
 
     return {
+      airborne: !this.grounded,
       actualDistance: 0,
       actualHeading: 0,
       actualMovement: Vector3.Zero(),
@@ -323,7 +431,8 @@ export class PlayerController {
       deflectionDegrees: 0,
       groundMesh: ground.mesh,
       groundNormal: ground.normal,
-      grounded: ground.grounded,
+      grounded: this.grounded,
+      justLanded: false,
       playerPosition: this.camera.position.clone(),
       positionBeforeMove: this.camera.position.clone(),
       requestedDistance: 0,
@@ -334,11 +443,13 @@ export class PlayerController {
       speedSampleSeconds: 0,
       velocityAfterCollision: Vector3.Zero(),
       velocityBeforeCollision: Vector3.Zero(),
+      verticalVelocity: this.verticalVelocity,
     };
   }
 }
 
 function classifyMovement(values: {
+  airborne: boolean;
   actualDistance: number;
   blockingMesh?: AbstractMesh;
   deflectionDegrees: number;
@@ -346,7 +457,7 @@ function classifyMovement(values: {
   grounded: boolean;
   requestedDistance: number;
 }): MovementResult {
-  if (!values.groundDetected) {
+  if (!values.groundDetected && !values.airborne) {
     return "GROUND DETECTION FAILURE";
   }
 

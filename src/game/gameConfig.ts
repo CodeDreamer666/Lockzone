@@ -8,6 +8,10 @@ export const GAME_CONFIG = {
     groundDeceleration: 48,
     standingHeight: 1.7,
     cameraFovDegrees: 80,
+    jumpInitialVelocity: 6.4,
+    gravity: -21.5,
+    airControlMultiplier: 0.3,
+    landingRecoverySeconds: 0.14,
   },
   camera: { sensitivity: 0.0012, minSensitivity: 0.0006, maxSensitivity: 0.003, verticalLimit: 1.5 },
   weapon: {

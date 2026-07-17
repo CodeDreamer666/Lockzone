@@ -71,3 +71,15 @@ export function moveHorizontalVelocityToward(
     z: current.z + differenceZ * scale,
   };
 }
+
+export function integrateVerticalMotion(
+  currentVelocity: number,
+  gravity: number,
+  deltaSeconds: number,
+) {
+  const nextVelocity = currentVelocity + gravity * deltaSeconds;
+  return {
+    displacement: (currentVelocity + nextVelocity) * 0.5 * deltaSeconds,
+    velocity: nextVelocity,
+  };
+}

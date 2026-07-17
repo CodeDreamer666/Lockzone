@@ -30,7 +30,7 @@ export class GameUI {
       <main class="menu menu--main">
         <p class="eyebrow">ABANDONED INDUSTRIAL SECURITY DISTRICT</p>
         <h1>BLACKSITE<br><em>RAINLINE</em></h1>
-        <p class="lede">Late afternoon. Light rain. A compromised command site with five connected combat districts.</p>
+        <p class="lede">Late afternoon. Light rain. Three tightly connected industrial combat areas surrounding a compromised command site.</p>
         <div class="menu-actions">
           <button id="start-match" class="primary-action">Start Mission</button>
           <button id="show-settings" class="quiet-action">Settings</button>
@@ -46,12 +46,13 @@ export class GameUI {
         </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
           <span><b>WASD</b> Move</span>
+          <span><b>Space</b> Jump</span>
           <span><b>Mouse</b> Look</span>
           <span><b>Left click</b> Fire</span>
           <span><b>R</b> Reload</span>
           <span><b>Esc</b> Pause</span>
         </section>
-        <p class="small">The mouse locks after the mission starts. All routes are navigable without jumping.</p>
+        <p class="small">The mouse locks after the mission starts. Jumping provides low-cover shortcuts; every major route also has stairs or ramps.</p>
       </main>`;
     this.bindStartActions(actions);
   }
@@ -78,7 +79,7 @@ export class GameUI {
           </div>
         </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
+          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
         </section>
       </main>`;
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
