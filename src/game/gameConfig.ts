@@ -8,7 +8,7 @@ export const GAME_CONFIG = {
     groundDeceleration: 48,
     standingHeight: 1.7,
     cameraFovDegrees: 80,
-    jumpInitialVelocity: 5.6,
+    jumpInitialVelocity: 6.8,
     gravity: -24,
     airControlMultiplier: 0.3,
     airDeceleration: 10,

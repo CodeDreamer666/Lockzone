@@ -80,6 +80,8 @@ export class PlayerController {
   private jumpActive = false;
   private jumpPressConsumed = false;
   private jumpBufferRemaining = 0;
+  private currentGroundMesh?: AbstractMesh;
+  private jumpLaunchSurface?: AbstractMesh;
   private justLanded = false;
   private collidedMesh?: AbstractMesh;
   private speedSamples: SpeedSample[] = [];
@@ -130,6 +132,7 @@ export class PlayerController {
       this.jumpBufferRemaining = GAME_CONFIG.player.jumpBufferSeconds;
     }
     if (this.grounded && this.jumpBufferRemaining > 0) {
+      this.jumpLaunchSurface = this.currentGroundMesh;
       this.verticalVelocity = GAME_CONFIG.player.jumpInitialVelocity;
       this.grounded = false;
       this.jumpActive = true;
@@ -251,6 +254,8 @@ export class PlayerController {
     this.jumpActive = false;
     this.jumpPressConsumed = false;
     this.jumpBufferRemaining = 0;
+    this.currentGroundMesh = undefined;
+    this.jumpLaunchSurface = undefined;
     this.justLanded = false;
     this.speedSamples = [];
     this.sampledDistance = 0;
@@ -279,7 +284,22 @@ export class PlayerController {
     this.verticalVelocity = verticalMotion.velocity;
     const beforeVerticalMove = this.camera.position.y;
     this.collidedMesh = undefined;
-    this.camera._collideWithWorld(new Vector3(0, verticalMotion.displacement, 0));
+    const ignoredLaunchSurface = verticalMotion.displacement > 0
+      ? this.jumpLaunchSurface
+      : undefined;
+    const launchSurfaceCollisionsEnabled = ignoredLaunchSurface?.checkCollisions;
+    // Solid cover must block horizontally but must not cancel the upward sweep
+    // that starts exactly on its own top face.
+    if (ignoredLaunchSurface) {
+      ignoredLaunchSurface.checkCollisions = false;
+    }
+    try {
+      this.camera._collideWithWorld(new Vector3(0, verticalMotion.displacement, 0));
+    } finally {
+      if (ignoredLaunchSurface && launchSurfaceCollisionsEnabled !== undefined) {
+        ignoredLaunchSurface.checkCollisions = launchSurfaceCollisionsEnabled;
+      }
+    }
     const actualVerticalMovement = this.camera.position.y - beforeVerticalMove;
 
     if (
@@ -287,6 +307,9 @@ export class PlayerController {
       && actualVerticalMovement < verticalMotion.displacement * COLLISION_DISTANCE_TOLERANCE
     ) {
       this.verticalVelocity = Math.min(0, this.verticalVelocity);
+    }
+    if (this.verticalVelocity <= 0) {
+      this.jumpLaunchSurface = undefined;
     }
 
     const ground = this.findGround();
@@ -297,6 +320,8 @@ export class PlayerController {
         this.grounded = true;
         this.justLanded = this.jumpActive;
         this.jumpActive = false;
+        this.currentGroundMesh = ground.mesh;
+        this.jumpLaunchSurface = undefined;
       }
     }
 
@@ -311,6 +336,7 @@ export class PlayerController {
   private snapToGround(deltaSeconds: number) {
     const ground = this.findGround();
     if (!ground.mesh || ground.targetCameraHeight === undefined || !ground.normal) {
+      this.currentGroundMesh = undefined;
       return {
         detected: false,
         grounded: false,
@@ -321,6 +347,7 @@ export class PlayerController {
 
     const heightDifference = ground.targetCameraHeight - this.camera.position.y;
     if (heightDifference > MAXIMUM_STEP_UP) {
+      this.currentGroundMesh = undefined;
       return {
         detected: false,
         grounded: false,
@@ -333,9 +360,14 @@ export class PlayerController {
       this.camera.position.y = ground.targetCameraHeight;
     }
 
+    const grounded = Math.abs(
+      this.camera.position.y - ground.targetCameraHeight,
+    ) < GROUND_CONTACT_TOLERANCE;
+    this.currentGroundMesh = grounded ? ground.mesh : undefined;
+
     return {
       detected: true,
-      grounded: Math.abs(this.camera.position.y - ground.targetCameraHeight) < GROUND_CONTACT_TOLERANCE,
+      grounded,
       mesh: ground.mesh,
       normal: ground.normal,
     };
@@ -348,7 +380,8 @@ export class PlayerController {
       + MAXIMUM_GROUND_DROP;
     const hits = this.scene.multiPickWithRay(
       new Ray(rayOrigin, Vector3.Down(), rayLength),
-      (mesh) => this.walkableSurfaces.includes(mesh),
+      (mesh) => this.walkableSurfaces.includes(mesh)
+        || mesh.metadata?.supportsGrounding === true,
     ) ?? [];
     const candidates = hits
       .map((hit) => ({

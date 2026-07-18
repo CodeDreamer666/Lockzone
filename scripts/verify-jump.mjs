@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { integrateVerticalMotion } from "../src/game/movementMath.ts";
 
-const initialVelocity = 5.6;
+const initialVelocity = 6.8;
 const gravity = -24;
 const airDeceleration = 10;
 
@@ -28,8 +28,8 @@ function simulate(frameRate) {
 
 const results = [30, 60, 120].map(simulate);
 for (const result of results) {
-  assert.ok(result.peakHeight >= 0.62 && result.peakHeight <= 0.68);
-  assert.ok(result.duration >= 0.44 && result.duration <= 0.5);
+  assert.ok(result.peakHeight >= 0.94 && result.peakHeight <= 0.98);
+  assert.ok(result.duration >= 0.55 && result.duration <= 0.6);
 }
 
 assert.ok(Math.max(...results.map((result) => result.peakHeight)) - Math.min(...results.map((result) => result.peakHeight)) < 0.01);

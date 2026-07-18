@@ -780,6 +780,99 @@ export class Game {
         Math.PI / 2,
         [{ frames: 84, input: forward }],
       ),
+      runElevationRoute(
+        "central catwalk east staircase",
+        new Vector3(16.8, GAME_CONFIG.player.standingHeight, 1),
+        -Math.PI / 2,
+        [{ frames: 84, input: forward }],
+      ),
+    ];
+    const runSurfaceJump = (
+      name: string,
+      start: Vector3,
+      minimumExpectedHeight: number,
+    ) => {
+      this.camera.position.copyFrom(start);
+      this.camera.rotation.set(0, 0, 0);
+      this.playerController!.reset();
+      const initialSnapshot = this.playerController!.getSnapshot();
+      const initialHeight = this.camera.position.y;
+      let jumpStarted = false;
+      let landingCount = 0;
+      let maximumHeight = initialHeight;
+
+      for (let frame = 0; frame < 90; frame += 1) {
+        const snapshot = this.playerController!.update({
+          forward: false,
+          backward: false,
+          left: false,
+          right: false,
+          jumpPressed: frame === 0,
+        }, 1 / 60);
+        jumpStarted ||= snapshot.verticalVelocity > 0 && !snapshot.grounded;
+        maximumHeight = Math.max(maximumHeight, snapshot.playerPosition.y);
+        if (snapshot.justLanded) landingCount += 1;
+      }
+
+      const finalSnapshot = this.playerController!.getSnapshot();
+      return {
+        finalGroundMesh: finalSnapshot.groundMesh?.name ?? "none",
+        finalGrounded: finalSnapshot.grounded,
+        heightGain: maximumHeight - initialHeight,
+        initialGroundMesh: initialSnapshot.groundMesh?.name ?? "none",
+        initiallyGrounded: initialSnapshot.grounded,
+        jumpStarted,
+        landingCount,
+        minimumExpectedHeight,
+        name,
+        passed: initialSnapshot.grounded
+          && jumpStarted
+          && maximumHeight - initialHeight >= minimumExpectedHeight
+          && landingCount === 1
+          && finalSnapshot.grounded,
+      };
+    };
+    const surfaceJumps = [
+      runSurfaceJump(
+        "asphalt ground",
+        new Vector3(-24, GAME_CONFIG.player.standingHeight, -24),
+        0.9,
+      ),
+      runSurfaceJump(
+        "single shipping container top",
+        new Vector3(-21, 4.3, -4),
+        0.9,
+      ),
+      runSurfaceJump(
+        "stacked wooden crate top",
+        new Vector3(-2.7, 4.2, -6.9),
+        0.9,
+      ),
+      runSurfaceJump(
+        "warehouse stair landing",
+        new Vector3(7.35, 6.7, 16.1),
+        0.9,
+      ),
+      runSurfaceJump(
+        "central catwalk",
+        new Vector3(0, 4.9, 1),
+        0.9,
+      ),
+      runSurfaceJump(
+        "warehouse rooftop",
+        new Vector3(-6, 6.7, 20),
+        0.9,
+      ),
+      runSurfaceJump(
+        "guard tower platform under canopy",
+        new Vector3(20, 8.925, 20),
+        0.9,
+      ),
+      runSurfaceJump(
+        "transformer cabinet top",
+        new Vector3(13, 4.1, 8),
+        0.9,
+      ),
     ];
     const evidence = {
       cancellationCount: results.flatMap((result) => result.directions).filter((result) => (
@@ -794,11 +887,21 @@ export class Game {
         )).map((mesh) => mesh.name),
       },
       elevationRoutes,
+      groundingIntegrity: {
+        groundableSolidCount: this.cover.filter((mesh) => (
+          mesh.metadata?.supportsGrounding === true
+        )).length,
+        missingGroundingSupport: this.cover.filter((mesh) => (
+          mesh.metadata?.physicsCategory === "solid"
+          && mesh.metadata?.supportsGrounding !== true
+        )).map((mesh) => mesh.name),
+      },
       groundFailureCount: results.flatMap((result) => result.directions).filter((result) => (
         result.result === "GROUND DETECTION FAILURE"
       )).length,
       mapDimensions: DISTRICT_DIMENSIONS,
       results,
+      surfaceJumps,
     };
 
     document.documentElement.dataset.mapMovementEvidence = JSON.stringify(evidence);

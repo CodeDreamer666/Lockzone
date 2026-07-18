@@ -81,6 +81,7 @@ export function createMap(scene: Scene): MapData {
       collisionCategory: "solid-cover",
       collisionShape: "box",
       physicsCategory: "solid",
+      supportsGrounding: true,
       surfaceType: options.surfaceType,
     };
     cover.push(mesh);
@@ -633,11 +634,12 @@ function createGuardTower(
     [2, 1.35, 0.14],
     "guard tower south railing east",
   );
-  decoration(
+  solid(
     "guard tower lookout roof",
     new Vector3(20, 10.3, 20),
     [6.6, 0.3, 6.6],
     materials.rustedSteel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
   );
   [
     new Vector3(17.5, 8.8, 17.5),
@@ -645,11 +647,12 @@ function createGuardTower(
     new Vector3(17.5, 8.8, 22.5),
     new Vector3(22.5, 8.8, 22.5),
   ].forEach((position, index) => {
-    decoration(
+    solid(
       `guard tower canopy post ${index}`,
       position,
       [0.15, 3, 0.15],
       materials.steel,
+      { bulletMaterial: "metal" },
     );
   });
   createWarningSign(
@@ -697,6 +700,18 @@ function createCentralCatwalk(
     2.2,
     "central catwalk west stairs",
   );
+  createStairFlight(
+    solid,
+    walkableSurfaces,
+    materials,
+    new Vector3(16.4, 0, 1),
+    new Vector3(-1, 0, 0),
+    9,
+    0.355,
+    0.74,
+    2.2,
+    "central catwalk east stairs",
+  );
   createRailing(
     solid,
     materials,
@@ -717,6 +732,14 @@ function createCentralCatwalk(
     [15, 0.22, 0.22],
     materials.containerRed,
   );
+  [-6, -2, 2, 6].forEach((x, index) => {
+    decoration(
+      `central catwalk pipe hanger ${index}`,
+      new Vector3(x, 2.65, 1),
+      [0.12, 0.45, 0.12],
+      materials.steel,
+    );
+  });
 }
 
 function createMaintenanceArea(
@@ -788,6 +811,21 @@ function createContainer(
   name: string,
   index: number,
 ) {
+  const placeDetail = (
+    detailName: string,
+    localPosition: Vector3,
+    size: [number, number, number],
+    material: PBRMaterial | StandardMaterial,
+  ) => {
+    const detail = decoration(
+      detailName,
+      position.add(rotateHorizontalOffset(localPosition, rotation)),
+      size,
+      material,
+    );
+    detail.rotation.y = rotation;
+    return detail;
+  };
   const container = solid(
     name,
     position,
@@ -797,26 +835,50 @@ function createContainer(
   );
   container.rotation.y = rotation;
 
-  for (let offset = -3.4; offset <= 3.4; offset += 1.15) {
-    const ribOffset = rotateHorizontalOffset(
-      new Vector3(offset, 0, -1.27),
-      rotation,
+  [-1.29, 1.29].forEach((side, sideIndex) => {
+    [-1.22, 1.22].forEach((height, railIndex) => {
+      placeDetail(
+        `${name} side frame ${index}-${sideIndex}-${railIndex}`,
+        new Vector3(0, height, side),
+        [8.28, 0.11, 0.11],
+        materials.containerFrame,
+      );
+    });
+  });
+
+  [-4.08, 4.08].forEach((end, endIndex) => {
+    [-1.28, 1.28].forEach((side, sideIndex) => {
+      placeDetail(
+        `${name} corner post ${index}-${endIndex}-${sideIndex}`,
+        new Vector3(end, 0, side),
+        [0.13, 2.52, 0.13],
+        materials.containerFrame,
+      );
+    });
+  });
+
+  [-0.72, 0, 0.72].forEach((doorOffset, barIndex) => {
+    placeDetail(
+      `${name} locking bar ${index}-${barIndex}`,
+      new Vector3(4.13, 0, doorOffset),
+      [0.08, 2.05, 0.08],
+      materials.containerFrame,
     );
-    const rib = decoration(
-      `${name} corrugation ${index}-${offset}`,
-      position.add(ribOffset),
-      [0.08, 2.2, 0.08],
-      materials.rustedSteel,
-    );
-    rib.rotation.y = rotation;
-  }
-  const doorStripe = decoration(
-    `${name} hazard plate`,
-    position.add(rotateHorizontalOffset(new Vector3(3.95, 0, -1.3), rotation)),
-    [0.18, 1.7, 0.06],
-    materials.safety,
+  });
+  placeDetail(
+    `${name} door center seam ${index}`,
+    new Vector3(4.135, 0, 0),
+    [0.07, 0.08, 2.3],
+    materials.containerFrame,
   );
-  doorStripe.rotation.y = rotation;
+  [-0.68, 0.68].forEach((doorOffset, plateIndex) => {
+    placeDetail(
+      `${name} identification plate ${index}-${plateIndex}`,
+      new Vector3(4.175, -0.36, doorOffset),
+      [0.04, 0.32, 0.42],
+      materials.identificationPlate,
+    );
+  });
 }
 
 function createStairFlight(
@@ -869,6 +931,23 @@ function createStairFlight(
       );
     });
   }
+
+  for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+    const stepTop = (stepIndex + 1) * stepHeight;
+    const railCenter = origin
+      .add(normalizedDirection.scale((stepIndex + 0.5) * stepDepth))
+      .add(new Vector3(0, stepTop + 0.92, 0));
+    [sideOffset, sideOffset.scale(-1)].forEach((offset, sideIndex) => {
+      const handrail = solid(
+        `${name} stepped handrail ${stepIndex}-${sideIndex}`,
+        railCenter.add(offset),
+        [0.11, 0.11, stepDepth + 0.08],
+        materials.steel,
+        { bulletMaterial: "metal" },
+      );
+      handrail.rotation.y = rotation;
+    });
+  }
 }
 
 function createRailing(
@@ -910,11 +989,12 @@ function createSecurityBooth(
     materials.containerOlive,
     { bulletMaterial: "metal" },
   );
-  decoration(
+  solid(
     "arrival security booth roof",
     position.add(new Vector3(0, 1.7, 0)),
     [4.8, 0.28, 4.5],
     materials.rustedSteel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
   );
   decoration(
     "arrival security booth front window",
@@ -969,6 +1049,9 @@ function createForklift(
   position: Vector3,
   rotation: number,
 ) {
+  const positionedFromBody = (offset: Vector3) => (
+    position.add(rotateHorizontalOffset(offset, rotation))
+  );
   const body = solid(
     "loading forklift solid body",
     position,
@@ -978,14 +1061,14 @@ function createForklift(
   );
   const mast = solid(
     "loading forklift solid mast",
-    position.add(new Vector3(0, 1.55, 1.25)),
+    positionedFromBody(new Vector3(0, 1.55, 1.25)),
     [1.7, 3.1, 0.3],
     materials.steel,
     { bulletMaterial: "metal" },
   );
   const forks = solid(
     "loading forklift solid forks",
-    position.add(new Vector3(0, -0.58, 2.15)),
+    positionedFromBody(new Vector3(0, -0.58, 2.15)),
     [1.7, 0.16, 1.7],
     materials.steel,
     { bulletMaterial: "metal" },
@@ -994,11 +1077,17 @@ function createForklift(
   mast.rotation.y = rotation;
   forks.rotation.y = rotation;
   decoration(
-    "loading forklift warning light",
-    position.add(new Vector3(0, 2.45, 0)),
-    [0.28, 0.18, 0.28],
+    "loading forklift beacon mount",
+    positionedFromBody(new Vector3(-0.78, 0.84, -0.72)),
+    [0.18, 0.22, 0.18],
+    materials.steel,
+  ).rotation.y = rotation;
+  decoration(
+    "loading forklift mounted warning beacon",
+    positionedFromBody(new Vector3(-0.78, 1.01, -0.72)),
+    [0.24, 0.12, 0.24],
     materials.glow,
-  );
+  ).rotation.y = rotation;
 }
 
 function createPalletLoad(
@@ -1053,7 +1142,7 @@ function createCrateCluster(
       `${name} label ${index}`,
       position.add(offset).add(new Vector3(0, 0, size[2] / 2 + 0.025)),
       [size[0] * 0.55, size[1] * 0.35, 0.04],
-      materials.safety,
+      materials.identificationPlate,
     );
   });
 }
@@ -1101,9 +1190,15 @@ function createGenerator(
     materials.steel,
   );
   decoration(
-    `${name} control panel`,
+    `${name} control panel housing`,
     position.add(new Vector3(2.03, 0.9, 0)),
     [0.05, 0.8, 1.1],
+    materials.steel,
+  );
+  decoration(
+    `${name} mounted indicator lens`,
+    position.add(new Vector3(2.065, 1.05, 0)),
+    [0.035, 0.14, 0.34],
     materials.glow,
   );
 }
@@ -1122,11 +1217,12 @@ function createDumpster(
     materials.containerBlue,
     { bulletMaterial: "metal" },
   );
-  const lid = decoration(
+  const lid = solid(
     `${name} lid`,
     position.add(new Vector3(0, 1.72, 0)),
     [4.1, 0.16, 2.5],
     materials.rustedSteel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
   );
   lid.rotation.z = -0.08;
 }
@@ -1194,6 +1290,7 @@ function createBarrelGroup(
       collisionCategory: "solid-cover",
       collisionShape: "cylinder",
       physicsCategory: "solid",
+      supportsGrounding: true,
     };
     cover.push(barrel);
   });
@@ -1324,29 +1421,81 @@ function createLighting(
   decoration: DecorationBuilder,
   materials: ArenaMaterials,
 ) {
-  const fixtures: Array<[Vector3, number, Color3]> = [
-    [new Vector3(-23, 5.5, -21), 0.8, new Color3(1, 0.46, 0.16)],
-    [new Vector3(-15, 5.4, 8), 0.72, new Color3(0.4, 0.62, 0.74)],
-    [new Vector3(0, 5.8, 1), 0.78, new Color3(1, 0.46, 0.15)],
-    [new Vector3(-6, 6.2, 14), 0.82, new Color3(1, 0.42, 0.12)],
-    [new Vector3(21, 8.8, 20), 0.72, new Color3(0.42, 0.65, 0.78)],
-    [new Vector3(23, 5.1, -9), 0.76, new Color3(1, 0.45, 0.14)],
+  const fixtures: Array<{
+    color: Color3;
+    intensity: number;
+    mountBottom: number;
+    position: Vector3;
+  }> = [
+    {
+      color: new Color3(1, 0.46, 0.16),
+      intensity: 0.8,
+      mountBottom: 3.4,
+      position: new Vector3(-18, 4.35, -28.65),
+    },
+    {
+      color: new Color3(0.4, 0.62, 0.74),
+      intensity: 0.72,
+      mountBottom: 0,
+      position: new Vector3(-15, 5.4, 8),
+    },
+    {
+      color: new Color3(1, 0.46, 0.15),
+      intensity: 0.78,
+      mountBottom: 3.2,
+      position: new Vector3(0, 5.45, 1),
+    },
+    {
+      color: new Color3(1, 0.42, 0.12),
+      intensity: 0.82,
+      mountBottom: 4.6,
+      position: new Vector3(-6, 6.2, 13.05),
+    },
+    {
+      color: new Color3(0.42, 0.65, 0.78),
+      intensity: 0.72,
+      mountBottom: 7.2,
+      position: new Vector3(21, 9.95, 20),
+    },
+    {
+      color: new Color3(1, 0.45, 0.14),
+      intensity: 0.76,
+      mountBottom: 0,
+      position: new Vector3(23, 5.1, -9),
+    },
   ];
 
-  fixtures.forEach(([position, intensity, color], index) => {
+  fixtures.forEach((fixture, index) => {
+    const mountHeight = fixture.position.y - fixture.mountBottom;
     decoration(
-      `industrial light fixture ${index}`,
-      position,
-      [0.65, 0.2, 0.65],
+      `industrial light support ${index}`,
+      new Vector3(
+        fixture.position.x,
+        fixture.mountBottom + mountHeight / 2,
+        fixture.position.z,
+      ),
+      [0.14, mountHeight, 0.14],
+      materials.steel,
+    );
+    decoration(
+      `industrial light housing ${index}`,
+      fixture.position,
+      [0.78, 0.18, 0.58],
+      materials.steel,
+    );
+    decoration(
+      `industrial light lens ${index}`,
+      fixture.position.add(new Vector3(0, -0.11, 0)),
+      [0.5, 0.04, 0.34],
       materials.glow,
     );
     const light = new PointLight(
       `industrial light ${index}`,
-      position.add(new Vector3(0, -0.2, 0)),
+      fixture.position.add(new Vector3(0, -0.2, 0)),
       scene,
     );
-    light.diffuse = color;
-    light.intensity = intensity;
+    light.diffuse = fixture.color;
+    light.intensity = fixture.intensity;
     light.range = 14;
   });
 }
@@ -1413,23 +1562,32 @@ function createArenaMaterials(scene: Scene) {
     new Color3(0.36, 0.2, 0.12),
     "steel",
   );
-  const containerBlue = material(
+  const containerBlue = containerMaterial(
     scene,
     "faded blue container paint",
-    new Color3(0.1, 0.3, 0.47),
-    "paint",
+    new Color3(0.18, 0.39, 0.58),
   );
-  const containerRed = material(
+  const containerRed = containerMaterial(
     scene,
     "oxide red container paint",
-    new Color3(0.48, 0.12, 0.08),
-    "paint",
+    new Color3(0.58, 0.2, 0.14),
   );
-  const containerOlive = material(
+  const containerOlive = containerMaterial(
     scene,
     "muted olive industrial paint",
-    new Color3(0.3, 0.4, 0.24),
-    "paint",
+    new Color3(0.38, 0.46, 0.28),
+  );
+  const containerFrame = material(
+    scene,
+    "worn container edge steel",
+    new Color3(0.12, 0.14, 0.13),
+    "steel",
+  );
+  const identificationPlate = material(
+    scene,
+    "weathered container identification plate",
+    new Color3(0.48, 0.47, 0.42),
+    "steel",
   );
   const wood = material(
     scene,
@@ -1466,6 +1624,8 @@ function createArenaMaterials(scene: Scene) {
     steel,
     rustedSteel,
     containerBlue,
+    containerFrame,
+    identificationPlate,
     containerRed,
     containerOlive,
     wood,
@@ -1474,6 +1634,30 @@ function createArenaMaterials(scene: Scene) {
     glass,
     glow,
   };
+}
+
+function containerMaterial(
+  scene: Scene,
+  name: string,
+  color: Color3,
+) {
+  const result = new PBRMaterial(name, scene);
+  const texture = new Texture(
+    "/assets/container-corrugated-weathered.png",
+    scene,
+    true,
+    false,
+  );
+  texture.wrapU = Texture.WRAP_ADDRESSMODE;
+  texture.wrapV = Texture.WRAP_ADDRESSMODE;
+  texture.uScale = 1.4;
+  texture.vScale = 1;
+  result.albedoColor = color;
+  result.albedoTexture = texture;
+  result.metallic = 0.32;
+  result.roughness = 0.72;
+  result.environmentIntensity = 0.42;
+  return result;
 }
 
 function material(
