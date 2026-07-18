@@ -726,20 +726,6 @@ function createCentralCatwalk(
     [17.4, 1.2, 0.14],
     "central catwalk north railing",
   );
-  decoration(
-    "central catwalk pipe run",
-    new Vector3(0, 2.45, 1),
-    [15, 0.22, 0.22],
-    materials.containerRed,
-  );
-  [-6, -2, 2, 6].forEach((x, index) => {
-    decoration(
-      `central catwalk pipe hanger ${index}`,
-      new Vector3(x, 2.65, 1),
-      [0.12, 0.45, 0.12],
-      materials.steel,
-    );
-  });
 }
 
 function createMaintenanceArea(
@@ -855,6 +841,15 @@ function createContainer(
         materials.containerFrame,
       );
     });
+
+    [-1.22, 1.22].forEach((height, railIndex) => {
+      placeDetail(
+        `${name} end frame ${index}-${endIndex}-${railIndex}`,
+        new Vector3(end, height, 0),
+        [0.11, 0.11, 2.5],
+        materials.containerFrame,
+      );
+    });
   });
 
   [-0.72, 0, 0.72].forEach((doorOffset, barIndex) => {
@@ -932,22 +927,6 @@ function createStairFlight(
     });
   }
 
-  for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
-    const stepTop = (stepIndex + 1) * stepHeight;
-    const railCenter = origin
-      .add(normalizedDirection.scale((stepIndex + 0.5) * stepDepth))
-      .add(new Vector3(0, stepTop + 0.92, 0));
-    [sideOffset, sideOffset.scale(-1)].forEach((offset, sideIndex) => {
-      const handrail = solid(
-        `${name} stepped handrail ${stepIndex}-${sideIndex}`,
-        railCenter.add(offset),
-        [0.11, 0.11, stepDepth + 0.08],
-        materials.steel,
-        { bulletMaterial: "metal" },
-      );
-      handrail.rotation.y = rotation;
-    });
-  }
 }
 
 function createRailing(
@@ -1438,12 +1417,6 @@ function createLighting(
       intensity: 0.72,
       mountBottom: 0,
       position: new Vector3(-15, 5.4, 8),
-    },
-    {
-      color: new Color3(1, 0.46, 0.15),
-      intensity: 0.78,
-      mountBottom: 3.2,
-      position: new Vector3(0, 5.45, 1),
     },
     {
       color: new Color3(1, 0.42, 0.12),
