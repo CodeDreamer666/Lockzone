@@ -23,6 +23,7 @@ import { BotManager } from "../bot/BotManager";
 import { Weapon } from "../combat/Weapon";
 import {
   createMap,
+  DISTRICT_DIMENSIONS,
   type BulletMaterial,
   type SurfaceType,
 } from "../map/createMap";
@@ -237,20 +238,20 @@ export class Game {
 
   private createPresentationScene() {
     this.createEnvironmentScene(false);
-    this.camera = this.createCamera(new Vector3(-81, 9, -64));
+    this.camera = this.createCamera(new Vector3(-34, 10, -35));
     this.camera.checkCollisions = false;
     this.camera.fov = 0.95;
-    this.camera.setTarget(new Vector3(-52, 3, -25));
+    this.camera.setTarget(new Vector3(0, 3, 0));
     this.presentationTime = 0;
     this.scene.onBeforeRenderObservable.add(() => {
       this.presentationTime += Math.min(this.engine.getDeltaTime() / 1000, 0.04);
       const t = this.presentationTime;
       const views = [
-        { position: new Vector3(-81, 9, -64), target: new Vector3(-52, 3, -25) },
-        { position: new Vector3(-79, 7, 32), target: new Vector3(-50, 3, 8) },
-        { position: new Vector3(-31, 6, -45), target: new Vector3(0, 3, -8) },
-        { position: new Vector3(24, 6, -42), target: new Vector3(55, 3, 5) },
-        { position: new Vector3(47, 4.2, 8), target: new Vector3(65, 2, 28) },
+        { position: new Vector3(-34, 10, -35), target: new Vector3(0, 3, 0) },
+        { position: new Vector3(-31, 7, 5), target: new Vector3(-4, 3, 5) },
+        { position: new Vector3(-5, 9, -33), target: new Vector3(2, 3, 2) },
+        { position: new Vector3(34, 11, -22), target: new Vector3(12, 4, 9) },
+        { position: new Vector3(31, 12, 34), target: new Vector3(2, 4, 16) },
       ];
       const view = views[Math.floor(t / 7) % views.length];
       this.camera.position.copyFrom(view.position.add(new Vector3(Math.sin(t * 0.09) * 2, Math.sin(t * 0.14) * 0.5, Math.cos(t * 0.08) * 1.5)));
@@ -527,6 +528,7 @@ export class Game {
         jumpPressed: boolean;
       },
       frameCount = 120,
+      movementReleaseFrame?: number,
     ) => {
       this.camera.position.copyFrom(start);
       this.camera.rotation.set(0, 0, 0);
@@ -534,10 +536,24 @@ export class Game {
       const groundHeight = this.camera.position.y;
       let peakHeight = groundHeight;
       let landingCount = 0;
+      let heightAtMovementRelease: number | undefined;
+      let peakAfterMovementRelease = groundHeight;
 
       for (let frame = 0; frame < frameCount; frame += 1) {
         const snapshot = this.playerController!.update(inputAtFrame(frame), 1 / 60);
         peakHeight = Math.max(peakHeight, snapshot.playerPosition.y);
+        if (frame === movementReleaseFrame) {
+          heightAtMovementRelease = snapshot.playerPosition.y;
+        }
+        if (
+          movementReleaseFrame !== undefined
+          && frame > movementReleaseFrame
+        ) {
+          peakAfterMovementRelease = Math.max(
+            peakAfterMovementRelease,
+            snapshot.playerPosition.y,
+          );
+        }
         if (snapshot.justLanded) landingCount += 1;
       }
 
@@ -550,6 +566,9 @@ export class Game {
         landingCount,
         name,
         peakJumpHeight: peakHeight - groundHeight,
+        verticalContinuedAfterMovementRelease: heightAtMovementRelease === undefined
+          ? undefined
+          : peakAfterMovementRelease > heightAtMovementRelease + 0.02,
       };
     };
     const idleJumpInput = (frame: number) => ({
@@ -565,12 +584,26 @@ export class Game {
         ...forwardInput,
         jumpPressed: frame === 0,
       })),
+      runJumpScenario("release W during jump", spawn, (frame) => ({
+        forward: frame < 7,
+        backward: false,
+        left: false,
+        right: false,
+        jumpPressed: frame === 0,
+      }), 120, 7),
       runJumpScenario("double jump rejected", spawn, (frame) => ({
         forward: false,
         backward: false,
         left: false,
         right: false,
         jumpPressed: frame === 0 || frame === 12,
+      })),
+      runJumpScenario("buffered landing jump", spawn, (frame) => ({
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        jumpPressed: frame === 0 || frame === 25,
       })),
       runJumpScenario("held jump does not repeat", spawn, () => ({
         forward: false,
@@ -612,17 +645,17 @@ export class Game {
     });
 
     const locations = [
-      { name: "container yard arrival", x: -73, z: -53 },
-      { name: "container passage", x: -62, z: -17 },
-      { name: "yard loading apron", x: -61, z: 32 },
-      { name: "warehouse receiving", x: 0, z: -41 },
-      { name: "warehouse central aisle", x: 3, z: -9 },
-      { name: "warehouse office route", x: 14, z: 13 },
-      { name: "warehouse north connector", x: -5, z: 29 },
-      { name: "command exposed checkpoint", x: 39, z: -38 },
-      { name: "command records corridor", x: 57, z: 8 },
-      { name: "central command room", x: 56, z: 25 },
-      { name: "command security catwalk", x: 37, z: 24 },
+      { name: "arrival spawn", x: -24, y: 2, z: -24 },
+      { name: "west container lane", x: -18, y: 2, z: -9 },
+      { name: "northwest circulation route", x: -21, y: 2, z: 15 },
+      { name: "central ground intersection", x: 0, y: 2, z: 7 },
+      { name: "loading apron", x: 8, y: 2, z: -23 },
+      { name: "warehouse interior", x: -7, y: 2, z: 20 },
+      { name: "warehouse rooftop", x: -7, y: 7, z: 20 },
+      { name: "east maintenance route", x: 21, y: 2, z: -7 },
+      { name: "guard tower stair route", x: 20, y: 5, z: 12 },
+      { name: "guard tower platform", x: 20, y: 9, z: 20 },
+      { name: "central catwalk", x: 0, y: 5, z: 1 },
     ];
     const directions = [
       {
@@ -644,7 +677,7 @@ export class Game {
     ];
     const results = locations.map((location) => {
       const directionResults = directions.map((direction) => {
-        this.camera.position.set(location.x, 7, location.z);
+        this.camera.position.set(location.x, location.y, location.z);
         this.camera.rotation.set(0, 0, 0);
         this.playerController!.reset();
 
@@ -670,20 +703,108 @@ export class Game {
         location: location.name,
       };
     });
+    const runElevationRoute = (
+      name: string,
+      start: Vector3,
+      yaw: number,
+      segments: Array<{
+        frames: number;
+        input: {
+          forward: boolean;
+          backward: boolean;
+          left: boolean;
+          right: boolean;
+        };
+      }>,
+    ) => {
+      this.camera.position.copyFrom(start);
+      this.camera.rotation.set(0, yaw, 0);
+      this.playerController!.reset();
+      let maximumHeight = this.camera.position.y;
+      let cancellationCount = 0;
+
+      segments.forEach((segment) => {
+        for (let frame = 0; frame < segment.frames; frame += 1) {
+          const snapshot = this.playerController!.update(
+            segment.input,
+            1 / 60,
+          );
+          maximumHeight = Math.max(maximumHeight, snapshot.playerPosition.y);
+          if (snapshot.result === "MOVEMENT CODE CANCELLATION") {
+            cancellationCount += 1;
+          }
+        }
+      });
+
+      const snapshot = this.playerController!.getSnapshot();
+      return {
+        cancellationCount,
+        finalGroundMesh: snapshot.groundMesh?.name ?? "none",
+        finalHeight: snapshot.playerPosition.y,
+        grounded: snapshot.grounded,
+        maximumHeight,
+        name,
+      };
+    };
+    const forward = {
+      forward: true,
+      backward: false,
+      left: false,
+      right: false,
+    };
+    const left = {
+      forward: false,
+      backward: false,
+      left: true,
+      right: false,
+    };
+    const elevationRoutes = [
+      runElevationRoute(
+        "warehouse rooftop staircase",
+        new Vector3(8, GAME_CONFIG.player.standingHeight, 6.5),
+        0,
+        [
+          { frames: 86, input: forward },
+          { frames: 42, input: left },
+        ],
+      ),
+      runElevationRoute(
+        "guard tower staircase",
+        new Vector3(20, GAME_CONFIG.player.standingHeight, 4.8),
+        0,
+        [{ frames: 132, input: forward }],
+      ),
+      runElevationRoute(
+        "central catwalk staircase",
+        new Vector3(-16.8, GAME_CONFIG.player.standingHeight, 1),
+        Math.PI / 2,
+        [{ frames: 84, input: forward }],
+      ),
+    ];
     const evidence = {
       cancellationCount: results.flatMap((result) => result.directions).filter((result) => (
         result.result === "MOVEMENT CODE CANCELLATION"
       )).length,
+      colliderIntegrity: {
+        colliders: this.cover.length,
+        invalidColliders: this.cover.filter((mesh) => (
+          !mesh.checkCollisions
+          || !mesh.isPickable
+          || mesh.metadata?.collisionCategory !== "solid-cover"
+        )).map((mesh) => mesh.name),
+      },
+      elevationRoutes,
       groundFailureCount: results.flatMap((result) => result.directions).filter((result) => (
         result.result === "GROUND DETECTION FAILURE"
       )).length,
+      mapDimensions: DISTRICT_DIMENSIONS,
       results,
     };
 
     document.documentElement.dataset.mapMovementEvidence = JSON.stringify(evidence);
     console.info("Neon Duel complete-map movement smoke verification", evidence);
 
-    this.camera.position.set(-74, GAME_CONFIG.player.standingHeight, -56);
+    this.camera.position.set(-24, GAME_CONFIG.player.standingHeight, -24);
     this.camera.rotation.set(0, 0, 0);
     this.playerController.reset();
   }

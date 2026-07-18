@@ -12,8 +12,8 @@ import {
 } from "@babylonjs/core";
 
 export const DISTRICT_DIMENSIONS = {
-  width: 168,
-  depth: 136,
+  width: 60,
+  depth: 60,
 } as const;
 
 export type SurfaceType = "asphalt" | "concrete" | "indoor" | "metal";
@@ -37,7 +37,6 @@ export interface MapData {
 }
 
 interface PhysicalOptions {
-  area?: "container-yard" | "warehouse" | "command-facility";
   bulletMaterial?: BulletMaterial;
   surfaceType?: SurfaceType;
 }
@@ -57,14 +56,14 @@ type DecorationBuilder = (
   material: PBRMaterial | StandardMaterial,
 ) => Mesh;
 
-type DistrictMaterials = ReturnType<typeof createDistrictMaterials>;
+type ArenaMaterials = ReturnType<typeof createArenaMaterials>;
 
 export function createMap(scene: Scene): MapData {
   const cover: Mesh[] = [];
   const decorativeMeshes: Mesh[] = [];
   const walkableSurfaces: Mesh[] = [];
   const pushableProps: PushablePropDefinition[] = [];
-  const materials = createDistrictMaterials(scene);
+  const materials = createArenaMaterials(scene);
 
   const solid: SolidBuilder = (name, position, size, material, options = {}) => {
     const mesh = MeshBuilder.CreateBox(name, {
@@ -78,7 +77,6 @@ export function createMap(scene: Scene): MapData {
     mesh.isPickable = true;
     mesh.receiveShadows = true;
     mesh.metadata = {
-      area: options.area,
       bulletMaterial: options.bulletMaterial ?? "concrete",
       collisionCategory: "solid-cover",
       collisionShape: "box",
@@ -104,7 +102,7 @@ export function createMap(scene: Scene): MapData {
     return mesh;
   };
 
-  const ground = MeshBuilder.CreateGround("compact district wet asphalt", {
+  const ground = MeshBuilder.CreateGround("single industrial yard wet asphalt", {
     width: DISTRICT_DIMENSIONS.width,
     height: DISTRICT_DIMENSIONS.depth,
     subdivisions: 4,
@@ -120,13 +118,27 @@ export function createMap(scene: Scene): MapData {
   walkableSurfaces.push(ground);
 
   createSky(scene, decorativeMeshes);
-  createVisibleBoundary(solid, decoration, materials);
-  createContainerLoadingYard(solid, decoration, walkableSurfaces, pushableProps, materials);
-  createWarehouseComplex(solid, decoration, walkableSurfaces, pushableProps, materials);
-  createCommandSecurityFacility(solid, decoration, walkableSurfaces, pushableProps, materials);
-  createAreaConnections(solid, decoration, materials);
-  createBackgroundScenery(decoration, materials);
-  createAtmosphericLights(scene, decoration, materials);
+  createPerimeter(solid, decoration, materials);
+  createArrivalLoadingArea(solid, decoration, pushableProps, materials);
+  createContainerLanes(solid, decoration, materials);
+  createWarehouse(
+    scene,
+    solid,
+    decoration,
+    walkableSurfaces,
+    materials,
+  );
+  createGuardTower(solid, decoration, walkableSurfaces, materials);
+  createCentralCatwalk(solid, decoration, walkableSurfaces, materials);
+  createMaintenanceArea(
+    scene,
+    solid,
+    decoration,
+    cover,
+    pushableProps,
+    materials,
+  );
+  createLighting(scene, decoration, materials);
   freezeStaticEnvironment(scene);
 
   return {
@@ -134,462 +146,1126 @@ export function createMap(scene: Scene): MapData {
     walkableSurfaces,
     decorativeMeshes,
     pushableProps,
-    playerSpawn: new Vector3(-74, 1.7, -56),
+    playerSpawn: new Vector3(-24, 1.7, -24),
     botSpawns: [
-      new Vector3(-62, 1.7, -30),
-      new Vector3(-46, 1.7, 5),
-      new Vector3(-66, 1.7, 42),
-      new Vector3(-18, 1.7, -37),
-      new Vector3(5, 1.7, -12),
-      new Vector3(-8, 1.7, 28),
-      new Vector3(36, 1.7, -28),
-      new Vector3(57, 1.7, -3),
-      new Vector3(42, 1.7, 31),
-      new Vector3(68, 1.7, 47),
+      new Vector3(-18, 1.7, -15),
+      new Vector3(-22, 1.7, 2),
+      new Vector3(-14, 1.7, 11),
+      new Vector3(-8, 1.7, -8),
+      new Vector3(2, 1.7, -20),
+      new Vector3(10, 1.7, -8),
+      new Vector3(17, 1.7, -20),
+      new Vector3(21, 1.7, 0),
+      new Vector3(-7, 1.7, 20),
+      new Vector3(20, 8.9, 20),
     ],
     resourcePoints: [
-      new Vector3(-62, 1, -45),
-      new Vector3(-47, 1, 28),
-      new Vector3(-14, 1, -17),
-      new Vector3(11, 1, 22),
-      new Vector3(37, 1, -13),
-      new Vector3(61, 1, 27),
+      new Vector3(-23, 1, -13),
+      new Vector3(-15, 1, 7),
+      new Vector3(1, 1, -18),
+      new Vector3(9, 1, 8),
+      new Vector3(-7, 6.4, 20),
+      new Vector3(20, 8.1, 20),
     ],
   };
 }
 
-function createVisibleBoundary(
+function createPerimeter(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
 ) {
   const halfWidth = DISTRICT_DIMENSIONS.width / 2;
   const halfDepth = DISTRICT_DIMENSIONS.depth / 2;
-  solid("north perimeter flood wall", new Vector3(0, 2.4, halfDepth - 0.8), [168, 4.8, 1.6], materials.darkConcrete);
-  solid("south perimeter flood wall", new Vector3(0, 2.4, -halfDepth + 0.8), [168, 4.8, 1.6], materials.darkConcrete);
-  solid("west perimeter warehouse wall", new Vector3(-halfWidth + 0.8, 2.4, 0), [1.6, 4.8, 136], materials.darkConcrete);
-  solid("east perimeter security wall", new Vector3(halfWidth - 0.8, 2.4, 0), [1.6, 4.8, 136], materials.darkConcrete);
+  solid(
+    "north visible concrete perimeter",
+    new Vector3(0, 2.25, halfDepth - 0.6),
+    [60, 4.5, 1.2],
+    materials.darkConcrete,
+  );
+  solid(
+    "south visible concrete perimeter",
+    new Vector3(0, 2.25, -halfDepth + 0.6),
+    [60, 4.5, 1.2],
+    materials.darkConcrete,
+  );
+  solid(
+    "west visible concrete perimeter",
+    new Vector3(-halfWidth + 0.6, 2.25, 0),
+    [1.2, 4.5, 60],
+    materials.darkConcrete,
+  );
+  solid(
+    "east visible concrete perimeter",
+    new Vector3(halfWidth - 0.6, 2.25, 0),
+    [1.2, 4.5, 60],
+    materials.darkConcrete,
+  );
 
-  for (let x = -76; x <= 76; x += 8) {
-    decoration(`north boundary fence post ${x}`, new Vector3(x, 5.2, 66.5), [0.18, 5.6, 0.18], materials.steel);
+  for (let x = -25; x <= 25; x += 5) {
+    decoration(
+      `north fence post ${x}`,
+      new Vector3(x, 5.2, 28.9),
+      [0.14, 2.1, 0.14],
+      materials.steel,
+    );
   }
-  for (let z = -58; z <= 58; z += 8) {
-    decoration(`east boundary fence post ${z}`, new Vector3(82.5, 5.2, z), [0.18, 5.6, 0.18], materials.steel);
+  for (let z = -24; z <= 24; z += 6) {
+    decoration(
+      `east fence post ${z}`,
+      new Vector3(28.9, 5.2, z),
+      [0.14, 2.1, 0.14],
+      materials.steel,
+    );
   }
+  createWarningSign(
+    decoration,
+    materials,
+    "RAINLINE // RESTRICTED YARD",
+    new Vector3(0, 3.1, -28.75),
+    12,
+    "south perimeter identity sign",
+  );
 }
 
-function createContainerLoadingYard(
+function createArrivalLoadingArea(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  walkableSurfaces: Mesh[],
   pushableProps: PushablePropDefinition[],
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
 ) {
-  const area = "container-yard" as const;
-  createSign(decoration, materials, "AREA 1  //  CONTAINER & LOADING", new Vector3(-54, 5.4, -59.5), 17, 1.1, "yard identity sign");
-  createOpenGate(solid, decoration, materials, new Vector3(-73, 0, -57), 10, 0, "yard arrival checkpoint", area);
-  createGuardBooth(solid, decoration, materials, new Vector3(-64, 1.6, -57), "yard arrival booth", area);
+  createSecurityBooth(
+    solid,
+    decoration,
+    materials,
+    new Vector3(-20.5, 1.5, -25.2),
+  );
+  createDamagedTruck(
+    solid,
+    decoration,
+    materials,
+    new Vector3(16, 1.25, -22),
+  );
+  createForklift(
+    solid,
+    decoration,
+    materials,
+    new Vector3(7, 0.75, -19),
+    -0.18,
+  );
+  createPalletLoad(
+    solid,
+    decoration,
+    materials,
+    new Vector3(11, 0, -12),
+    "loading palletized machinery",
+  );
+  createPalletLoad(
+    solid,
+    decoration,
+    materials,
+    new Vector3(20, 0, -10),
+    "loading export crates",
+  );
+  createConcreteBarrier(
+    solid,
+    materials,
+    new Vector3(-11, 0.65, -24),
+    -0.08,
+    "arrival concrete barrier west",
+  );
+  createConcreteBarrier(
+    solid,
+    materials,
+    new Vector3(-3.5, 0.65, -24),
+    0.08,
+    "arrival concrete barrier east",
+  );
+  createHazardMarking(
+    decoration,
+    materials,
+    new Vector3(6, 0.025, -24),
+    [10, 0.04, 0.22],
+    "loading bay yellow line",
+  );
 
-  const containerLayout: Array<[number, number, number, number]> = [
-    [-72, -42, 0, 0], [-57, -44, 1, 0], [-41, -40, 2, 0.08],
-    [-70, -26, 2, 0], [-52, -27, 0, -0.06], [-36, -22, 1, Math.PI / 2],
-    [-73, -7, 1, 0.05], [-56, -9, 2, 0], [-38, -3, 0, -0.08],
-    [-68, 12, 0, Math.PI / 2], [-50, 11, 1, 0], [-34, 16, 2, Math.PI / 2],
+  [
+    new Vector3(-17, 0.5, -22),
+    new Vector3(-14.5, 0.5, -20.5),
+    new Vector3(4, 0.5, -23),
+    new Vector3(8, 0.5, -23),
+  ].forEach((position, index) => {
+    createPushableCone(
+      sceneOf(materials),
+      pushableProps,
+      materials,
+      position,
+      `arrival traffic cone ${index}`,
+    );
+  });
+}
+
+function createContainerLanes(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+) {
+  const layouts: Array<{
+    position: Vector3;
+    rotation: number;
+    material: PBRMaterial;
+    stacked?: boolean;
+    name: string;
+  }> = [
+    {
+      position: new Vector3(-23, 1.3, -14),
+      rotation: 0,
+      material: materials.containerBlue,
+      stacked: true,
+      name: "west blue container stack",
+    },
+    {
+      position: new Vector3(-21, 1.3, -4),
+      rotation: Math.PI / 2,
+      material: materials.containerRed,
+      name: "west red cross container",
+    },
+    {
+      position: new Vector3(-23, 1.3, 7),
+      rotation: 0.05,
+      material: materials.containerOlive,
+      name: "northwest olive container",
+    },
+    {
+      position: new Vector3(-12, 1.3, 8),
+      rotation: Math.PI / 2,
+      material: materials.containerBlue,
+      name: "central blue cross container",
+    },
+    {
+      position: new Vector3(-10, 1.3, -14),
+      rotation: -0.04,
+      material: materials.containerRed,
+      name: "southwest red container",
+    },
+    {
+      position: new Vector3(1, 1.3, -18),
+      rotation: Math.PI / 2,
+      material: materials.containerOlive,
+      name: "south central olive container",
+    },
+    {
+      position: new Vector3(8, 1.3, -10),
+      rotation: 0,
+      material: materials.containerBlue,
+      stacked: true,
+      name: "central blue container stack",
+    },
+    {
+      position: new Vector3(17, 1.3, -4),
+      rotation: Math.PI / 2,
+      material: materials.containerRed,
+      name: "east red cross container",
+    },
   ];
-  containerLayout.forEach(([x, z, materialIndex, rotation], index) => {
-    const material = [materials.containerBlue, materials.containerRed, materials.containerSand][materialIndex];
-    const container = solid(`solid shipping container ${index}`, new Vector3(x, 1.45, z), [12.4, 2.9, 2.7], material, {
-      area,
-      bulletMaterial: "metal",
-    });
-    container.rotation.y = rotation;
-    createContainerDetails(decoration, materials, container, index);
-    if ([1, 4, 8].includes(index)) {
-      const upper = solid(`solid stacked shipping container ${index}`, new Vector3(x, 4.35, z), [12.4, 2.9, 2.7], material, {
-        area,
-        bulletMaterial: "metal",
-      });
-      upper.rotation.y = rotation;
+
+  layouts.forEach((layout, index) => {
+    createContainer(
+      solid,
+      decoration,
+      materials,
+      layout.position,
+      layout.rotation,
+      layout.material,
+      layout.name,
+      index,
+    );
+    if (layout.stacked) {
+      createContainer(
+        solid,
+        decoration,
+        materials,
+        layout.position.add(new Vector3(0, 2.6, 0)),
+        layout.rotation,
+        layout.material,
+        `${layout.name} upper`,
+        index + layouts.length,
+      );
     }
   });
 
-  createTruck(solid, decoration, materials, new Vector3(-42, 1.3, -52), Math.PI / 2, "yard loading truck", area);
-  createForklift(solid, decoration, materials, new Vector3(-57, 0.8, 25), -0.18, "yard loading forklift", area);
-  createPalletStack(solid, decoration, materials, new Vector3(-43, 0.65, 27), "yard palletized cargo", area);
-  createPalletStack(solid, decoration, materials, new Vector3(-71, 0.65, 29), "yard export cargo", area);
-
-  [[-76, -34, 0.18], [-47, -34, -0.12], [-62, 2, 0.08], [-42, 8, -0.18]].forEach(([x, z, rotation], index) => {
-    createConcreteBarrier(solid, materials, new Vector3(x, 0.65, z), rotation, `yard route barrier ${index}`, area);
-  });
-
-  const walkway = solid("yard elevated loading walkway", new Vector3(-55, 3.35, 40), [39, 0.35, 3.4], materials.steel, {
-    area,
-    bulletMaterial: "metal",
-    surfaceType: "metal",
-  });
-  walkableSurfaces.push(walkway);
-  createRamp(solid, walkableSurfaces, materials.steel, "yard walkway access ramp", new Vector3(-78, 1.7, 40), 3.4, 14, 3.4, Math.PI / 2, area);
-  solid("yard walkway north railing", new Vector3(-55, 4.05, 41.65), [39, 1.05, 0.12], materials.steel, { area, bulletMaterial: "metal" });
-  solid("yard walkway south railing", new Vector3(-55, 4.05, 38.35), [39, 1.05, 0.12], materials.steel, { area, bulletMaterial: "metal" });
-
-  solid("yard jumpable low barrier", new Vector3(-31, 0.55, 34), [6, 1.1, 0.8], materials.concrete, { area });
-  createPushableCone(sceneOf(materials), pushableProps, materials, new Vector3(-66, 0.5, -51), "yard cone 0");
-  createPushableCone(sceneOf(materials), pushableProps, materials, new Vector3(-61, 0.5, -48), "yard cone 1");
-  createPushableBox(sceneOf(materials), pushableProps, materials, new Vector3(-48, 0.45, 22), "yard loose crate 0");
-  createPushableBox(sceneOf(materials), pushableProps, materials, new Vector3(-46.8, 0.45, 21), "yard loose crate 1");
+  createConcreteBarrier(
+    solid,
+    materials,
+    new Vector3(-15, 0.65, 12),
+    Math.PI / 2,
+    "container lane concrete corner",
+  );
+  createCrateCluster(
+    solid,
+    decoration,
+    materials,
+    new Vector3(-3, 0, -7),
+    "central route crates",
+  );
 }
 
-function createWarehouseComplex(
-  solid: SolidBuilder,
-  decoration: DecorationBuilder,
-  walkableSurfaces: Mesh[],
-  pushableProps: PushablePropDefinition[],
-  materials: DistrictMaterials,
-) {
-  const area = "warehouse" as const;
-  createIndoorFloor(sceneOf(materials), walkableSurfaces, materials, "warehouse hard floor", new Vector3(-2, 0.025, -7), 54, 82, area);
-  createSign(decoration, materials, "AREA 2  //  WAREHOUSE W-04", new Vector3(-2, 7.4, -48.8), 18, 1.15, "warehouse identity sign");
-
-  solid("warehouse west wall south", new Vector3(-29, 4, -34), [1.2, 8, 28], materials.darkConcrete, { area });
-  solid("warehouse west wall north", new Vector3(-29, 4, 18), [1.2, 8, 28], materials.darkConcrete, { area });
-  solid("warehouse east wall south", new Vector3(25, 4, -38), [1.2, 8, 20], materials.darkConcrete, { area });
-  solid("warehouse east wall center", new Vector3(25, 4, -5), [1.2, 8, 28], materials.darkConcrete, { area });
-  solid("warehouse east wall north", new Vector3(25, 4, 34), [1.2, 8, 18], materials.darkConcrete, { area });
-  solid("warehouse south wall west", new Vector3(-20, 4, -48), [17, 8, 1.2], materials.darkConcrete, { area });
-  solid("warehouse south wall center", new Vector3(-2, 4, -48), [9, 8, 1.2], materials.darkConcrete, { area });
-  solid("warehouse south wall east", new Vector3(17, 4, -48), [15, 8, 1.2], materials.darkConcrete, { area });
-  solid("warehouse north wall west", new Vector3(-19, 4, 34), [19, 8, 1.2], materials.darkConcrete, { area });
-  solid("warehouse north wall east", new Vector3(15, 4, 34), [19, 8, 1.2], materials.darkConcrete, { area });
-  solid("warehouse roof west", new Vector3(-19, 8.25, -7), [20, 0.45, 82], materials.rustedSteel, { area, bulletMaterial: "metal" });
-  solid("warehouse roof east", new Vector3(15, 8.25, -7), [20, 0.45, 82], materials.rustedSteel, { area, bulletMaterial: "metal" });
-
-  [-20, -8, 4, 16].forEach((x, index) => {
-    solid(`warehouse structural pillar south ${index}`, new Vector3(x, 3.8, -30), [1.1, 7.6, 1.1], materials.concrete, { area });
-    solid(`warehouse structural pillar north ${index}`, new Vector3(x, 3.8, 17), [1.1, 7.6, 1.1], materials.concrete, { area });
-  });
-
-  [[-18, -22], [-5, -22], [9, -22], [-16, 4], [-2, 5], [13, 4], [-17, 23], [8, 22]].forEach(([x, z], index) => {
-    createWarehouseRack(solid, decoration, materials, new Vector3(x, 1.8, z), index, area);
-  });
-
-  solid("warehouse loading room divider", new Vector3(-15, 2.1, -12), [16, 4.2, 0.5], materials.darkConcrete, { area });
-  solid("warehouse office divider west", new Vector3(11, 2.1, 17), [0.5, 4.2, 15], materials.darkConcrete, { area });
-  solid("warehouse office divider north", new Vector3(18, 2.1, 24.5), [14, 4.2, 0.5], materials.darkConcrete, { area });
-  createDoorFrame(decoration, materials, new Vector3(11, 1.8, 12), Math.PI / 2, "warehouse office doorway");
-  createOfficeFurniture(decoration, materials, new Vector3(18, 0.75, 19), "warehouse dispatch office");
-
-  const officeWalkway = solid("warehouse observation platform", new Vector3(16, 3.25, 28.5), [15, 0.35, 6], materials.steel, {
-    area,
-    bulletMaterial: "metal",
-    surfaceType: "metal",
-  });
-  walkableSurfaces.push(officeWalkway);
-  createStaircase(solid, walkableSurfaces, materials, new Vector3(5.5, 0, 28.5), 8, 0, "warehouse observation stairs", area);
-  createRamp(solid, walkableSurfaces, materials.steel, "warehouse north service ramp", new Vector3(20, 1.65, 39), 3.2, 13, 3.3, 0, area);
-  solid("warehouse platform railing", new Vector3(16, 4, 25.55), [15, 1, 0.12], materials.steel, { area, bulletMaterial: "metal" });
-
-  createForklift(solid, decoration, materials, new Vector3(-20, 0.8, -40), 0.25, "warehouse aisle forklift", area);
-  createPalletStack(solid, decoration, materials, new Vector3(12, 0.65, -35), "warehouse receiving pallets", area);
-  createPushableBox(sceneOf(materials), pushableProps, materials, new Vector3(-10, 0.45, -38), "warehouse loose box 0");
-  createPushableBox(sceneOf(materials), pushableProps, materials, new Vector3(-8.8, 0.45, -37.5), "warehouse loose box 1");
-  createPushableCone(sceneOf(materials), pushableProps, materials, new Vector3(21, 0.5, -43), "warehouse safety cone");
-}
-
-function createCommandSecurityFacility(
-  solid: SolidBuilder,
-  decoration: DecorationBuilder,
-  walkableSurfaces: Mesh[],
-  pushableProps: PushablePropDefinition[],
-  materials: DistrictMaterials,
-) {
-  const area = "command-facility" as const;
-  createIndoorFloor(sceneOf(materials), walkableSurfaces, materials, "command facility hard floor", new Vector3(55, 0.025, 9), 52, 76, area);
-  createSign(decoration, materials, "AREA 3  //  COMMAND & SECURITY", new Vector3(54, 7.6, -34.7), 19, 1.2, "command identity sign");
-  createOpenGate(solid, decoration, materials, new Vector3(39, 0, -41), 12, 0, "command exposed checkpoint", area);
-  createGuardBooth(solid, decoration, materials, new Vector3(51, 1.6, -41), "command checkpoint booth", area);
-
-  solid("command west wall south", new Vector3(29, 4.2, -25), [1.2, 8.4, 19], materials.darkConcrete, { area });
-  solid("command west wall center", new Vector3(29, 4.2, 3), [1.2, 8.4, 20], materials.darkConcrete, { area });
-  solid("command west wall north", new Vector3(29, 4.2, 36), [1.2, 8.4, 20], materials.darkConcrete, { area });
-  solid("command east wall", new Vector3(81, 4.2, 9), [1.2, 8.4, 76], materials.darkConcrete, { area });
-  solid("command south wall west", new Vector3(35, 4.2, -29), [11, 8.4, 1.2], materials.darkConcrete, { area });
-  solid("command south wall center", new Vector3(55, 4.2, -29), [15, 8.4, 1.2], materials.darkConcrete, { area });
-  solid("command south wall east", new Vector3(75, 4.2, -29), [11, 8.4, 1.2], materials.darkConcrete, { area });
-  solid("command north wall west", new Vector3(40, 4.2, 47), [22, 8.4, 1.2], materials.darkConcrete, { area });
-  solid("command north wall east", new Vector3(72, 4.2, 47), [18, 8.4, 1.2], materials.darkConcrete, { area });
-  solid("command roof west", new Vector3(40, 8.65, 9), [20, 0.45, 76], materials.rustedSteel, { area, bulletMaterial: "metal" });
-  solid("command roof east", new Vector3(70, 8.65, 9), [20, 0.45, 76], materials.rustedSteel, { area, bulletMaterial: "metal" });
-
-  solid("security office divider", new Vector3(44, 2.05, -12), [0.5, 4.1, 22], materials.darkConcrete, { area });
-  solid("records corridor divider west", new Vector3(55, 2.05, 0), [22, 4.1, 0.5], materials.darkConcrete, { area });
-  solid("records corridor divider east", new Vector3(73, 2.05, 0), [8, 4.1, 0.5], materials.darkConcrete, { area });
-  solid("control room west wall", new Vector3(50, 2.05, 25), [0.5, 4.1, 20], materials.darkConcrete, { area });
-  solid("control room south wall west", new Vector3(57, 2.05, 15), [14, 4.1, 0.5], materials.darkConcrete, { area });
-  solid("control room south wall east", new Vector3(75, 2.05, 15), [8, 4.1, 0.5], materials.darkConcrete, { area });
-  createDoorFrame(decoration, materials, new Vector3(44, 1.8, -2), Math.PI / 2, "command security office door");
-  createDoorFrame(decoration, materials, new Vector3(66, 1.8, 0), 0, "command records corridor door");
-  createDoorFrame(decoration, materials, new Vector3(66, 1.8, 15), 0, "central command room door");
-
-  solid("central command table", new Vector3(65, 1.15, 28), [8, 2.3, 4], materials.steel, { area, bulletMaterial: "metal" });
-  createControlBank(decoration, materials, new Vector3(65, 1.15, 35), "central command control bank");
-  createOfficeFurniture(decoration, materials, new Vector3(36, 0.75, -10), "security office workstation");
-  createOfficeFurniture(decoration, materials, new Vector3(70, 0.75, 7), "command records station");
-  solid("command server rack north", new Vector3(77, 1.8, 31), [3, 3.6, 6], materials.steel, { area, bulletMaterial: "metal" });
-  solid("command server rack south", new Vector3(77, 1.8, 21), [3, 3.6, 6], materials.steel, { area, bulletMaterial: "metal" });
-
-  const catwalk = solid("command security catwalk", new Vector3(37, 3.4, 24), [12, 0.35, 28], materials.steel, {
-    area,
-    bulletMaterial: "metal",
-    surfaceType: "metal",
-  });
-  walkableSurfaces.push(catwalk);
-  createStaircase(solid, walkableSurfaces, materials, new Vector3(37, 0, 6.5), 8, 0, "command catwalk stairs", area);
-  createRamp(solid, walkableSurfaces, materials.steel, "command catwalk maintenance ramp", new Vector3(37, 1.7, 44), 3.4, 14, 3.4, 0, area);
-  solid("command catwalk east railing", new Vector3(43, 4.1, 24), [0.12, 1, 28], materials.steel, { area, bulletMaterial: "metal" });
-
-  createCommunicationsTower(sceneOf(materials), decoration, materials, new Vector3(65, 19, 28));
-  createPushableCone(sceneOf(materials), pushableProps, materials, new Vector3(36, 0.5, -37), "command checkpoint cone 0");
-  createPushableCone(sceneOf(materials), pushableProps, materials, new Vector3(43, 0.5, -37), "command checkpoint cone 1");
-  createPushableBox(sceneOf(materials), pushableProps, materials, new Vector3(72, 0.45, -8), "command loose equipment case");
-}
-
-function createAreaConnections(
-  solid: SolidBuilder,
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-) {
-  createOpenGate(solid, decoration, materials, new Vector3(-29, 0, -28), 9, Math.PI / 2, "yard warehouse exposed loading gate", "warehouse");
-  createOpenGate(solid, decoration, materials, new Vector3(-29, 0, 24), 8, Math.PI / 2, "yard warehouse sheltered service gate", "warehouse");
-  decoration("yard warehouse sheltered pipe bridge", new Vector3(-29, 5.6, 24), [0.9, 0.7, 11], materials.rustedSteel);
-
-  createOpenGate(solid, decoration, materials, new Vector3(27, 0, -16), 10, Math.PI / 2, "warehouse command exposed checkpoint", "command-facility");
-  createOpenGate(solid, decoration, materials, new Vector3(27, 0, 27), 8, Math.PI / 2, "warehouse command concealed connector", "command-facility");
-  decoration("warehouse command overhead services", new Vector3(27, 5.8, 27), [0.9, 0.8, 12], materials.rustedSteel);
-}
-
-function createBackgroundScenery(decoration: DecorationBuilder, materials: DistrictMaterials) {
-  decoration("background water treatment silhouette", new Vector3(-58, 7, 77), [38, 14, 14], materials.darkConcrete);
-  decoration("background water tank", new Vector3(-76, 11, 78), [12, 22, 12], materials.rustedSteel);
-  decoration("background electrical substation", new Vector3(58, 6, 77), [42, 12, 13], materials.steel);
-  decoration("background fleet depot", new Vector3(6, 8, -78), [48, 16, 15], materials.paintedSteel);
-}
-
-function createAtmosphericLights(scene: Scene, decoration: DecorationBuilder, materials: DistrictMaterials) {
-  const fixtures: Array<[number, number, number, number, Color3]> = [
-    [-63, 5.5, -24, 0.7, new Color3(1, 0.44, 0.16)],
-    [-49, 5.5, 28, 0.65, new Color3(0.34, 0.56, 0.68)],
-    [-12, 6.4, -24, 0.75, new Color3(1, 0.45, 0.16)],
-    [10, 6.4, 18, 0.7, new Color3(1, 0.45, 0.16)],
-    [39, 6.3, -15, 0.85, new Color3(0.35, 0.58, 0.72)],
-    [65, 6.3, 28, 0.95, new Color3(1, 0.34, 0.1)],
-  ];
-  fixtures.forEach(([x, y, z, intensity, color], index) => {
-    decoration(`compact district light fixture ${index}`, new Vector3(x, y, z), [0.7, 0.2, 0.7], materials.glow);
-    const light = new PointLight(`compact district light ${index}`, new Vector3(x, y - 0.2, z), scene);
-    light.diffuse = color;
-    light.intensity = intensity;
-    light.range = 17;
-  });
-}
-
-function createIndoorFloor(
+function createWarehouse(
   scene: Scene,
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
   walkableSurfaces: Mesh[],
-  materials: DistrictMaterials,
-  name: string,
-  position: Vector3,
-  width: number,
-  depth: number,
-  area: string,
+  materials: ArenaMaterials,
 ) {
-  const floor = MeshBuilder.CreateGround(name, { width, height: depth, subdivisions: 2 }, scene);
-  floor.position.copyFrom(position);
-  floor.material = materials.darkConcrete;
+  const center = new Vector3(-6, 0, 20);
+  const floor = MeshBuilder.CreateGround(
+    "warehouse walkable floor",
+    { width: 21.5, height: 13.5, subdivisions: 2 },
+    scene,
+  );
+  floor.position.set(center.x, 0.02, center.z);
+  floor.material = materials.concrete;
   floor.checkCollisions = true;
   floor.isPickable = true;
   floor.receiveShadows = true;
   floor.metadata = {
-    area,
     physicsCategory: "walkable-surface",
     surfaceType: "indoor" satisfies SurfaceType,
   };
   walkableSurfaces.push(floor);
+
+  solid(
+    "warehouse west wall",
+    new Vector3(-16.8, 2.3, 20),
+    [0.55, 4.6, 14],
+    materials.concrete,
+  );
+  solid(
+    "warehouse east wall",
+    new Vector3(4.8, 2.3, 20),
+    [0.55, 4.6, 14],
+    materials.concrete,
+  );
+  solid(
+    "warehouse north wall",
+    new Vector3(-6, 2.3, 26.8),
+    [22, 4.6, 0.55],
+    materials.concrete,
+  );
+  solid(
+    "warehouse south wall west",
+    new Vector3(-12.2, 2.3, 13.2),
+    [9.2, 4.6, 0.55],
+    materials.concrete,
+  );
+  solid(
+    "warehouse south wall east",
+    new Vector3(1.4, 2.3, 13.2),
+    [6.8, 4.6, 0.55],
+    materials.concrete,
+  );
+
+  const roof = solid(
+    "accessible warehouse rooftop",
+    new Vector3(-6, 4.8, 20),
+    [22, 0.4, 14],
+    materials.rustedSteel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
+  );
+  walkableSurfaces.push(roof);
+
+  createStairFlight(
+    solid,
+    walkableSurfaces,
+    materials,
+    new Vector3(8, 0, 6.8),
+    new Vector3(0, 0, 1),
+    13,
+    0.38,
+    0.74,
+    2.3,
+    "warehouse rooftop stairs",
+  );
+  const roofBridge = solid(
+    "warehouse rooftop stair landing",
+    new Vector3(6.4, 4.82, 16.1),
+    [3.8, 0.36, 3],
+    materials.steel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
+  );
+  walkableSurfaces.push(roofBridge);
+  createRailing(
+    solid,
+    materials,
+    new Vector3(8.1, 5.48, 15.8),
+    [0.14, 1.25, 3.7],
+    "warehouse stair landing east railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(-16.5, 5.5, 20),
+    [0.14, 1.25, 12.8],
+    "warehouse roof west railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(-6, 5.5, 26.5),
+    [20.8, 1.25, 0.14],
+    "warehouse roof north railing",
+  );
+
+  createCrateCluster(
+    solid,
+    decoration,
+    materials,
+    new Vector3(-12.5, 0, 20),
+    "warehouse stored crates",
+  );
+  createUtilityBox(
+    solid,
+    decoration,
+    materials,
+    new Vector3(1.8, 0, 23.4),
+    "warehouse electrical cabinet",
+  );
+  createPalletLoad(
+    solid,
+    decoration,
+    materials,
+    new Vector3(-1.5, 0, 17),
+    "warehouse receiving pallet",
+  );
+  createWarningSign(
+    decoration,
+    materials,
+    "WAREHOUSE 04 // ROOF ACCESS",
+    new Vector3(-6, 3.35, 12.88),
+    8.5,
+    "warehouse access sign",
+  );
+  createHazardMarking(
+    decoration,
+    materials,
+    new Vector3(-5, 0.05, 14.1),
+    [5.2, 0.04, 0.22],
+    "warehouse threshold marking",
+  );
 }
 
-function createRamp(
+function createGuardTower(
   solid: SolidBuilder,
+  decoration: DecorationBuilder,
   walkableSurfaces: Mesh[],
-  material: PBRMaterial,
-  name: string,
-  position: Vector3,
-  width: number,
-  run: number,
-  rise: number,
-  rotation: number,
-  area: PhysicalOptions["area"],
+  materials: ArenaMaterials,
 ) {
-  const ramp = solid(name, position, [width, 0.25, run], material, {
-    area,
-    bulletMaterial: "metal",
-    surfaceType: "metal",
+  const platformCenter = new Vector3(20, 7.05, 20);
+  [
+    new Vector3(18, 3.5, 18),
+    new Vector3(22, 3.5, 18),
+    new Vector3(18, 3.5, 22),
+    new Vector3(22, 3.5, 22),
+  ].forEach((position, index) => {
+    solid(
+      `guard tower support ${index}`,
+      position,
+      [0.55, 7, 0.55],
+      materials.steel,
+      { bulletMaterial: "metal" },
+    );
   });
-  ramp.rotation.x = Math.atan2(rise, run);
-  ramp.rotation.y = rotation;
-  walkableSurfaces.push(ramp);
+
+  const platform = solid(
+    "accessible guard tower top platform",
+    platformCenter,
+    [6, 0.35, 6],
+    materials.steel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
+  );
+  walkableSurfaces.push(platform);
+
+  createStairFlight(
+    solid,
+    walkableSurfaces,
+    materials,
+    new Vector3(20, 0, 5.1),
+    new Vector3(0, 0, 1),
+    18,
+    0.38,
+    0.72,
+    2.1,
+    "guard tower metal stairs",
+  );
+
+  createRailing(
+    solid,
+    materials,
+    new Vector3(17.2, 7.8, 20),
+    [0.14, 1.35, 5.7],
+    "guard tower west railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(22.8, 7.8, 20),
+    [0.14, 1.35, 5.7],
+    "guard tower east railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(20, 7.8, 22.8),
+    [5.7, 1.35, 0.14],
+    "guard tower north railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(18.3, 7.8, 17.2),
+    [2.2, 1.35, 0.14],
+    "guard tower south railing west",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(21.8, 7.8, 17.2),
+    [2, 1.35, 0.14],
+    "guard tower south railing east",
+  );
+  decoration(
+    "guard tower lookout roof",
+    new Vector3(20, 10.3, 20),
+    [6.6, 0.3, 6.6],
+    materials.rustedSteel,
+  );
+  [
+    new Vector3(17.5, 8.8, 17.5),
+    new Vector3(22.5, 8.8, 17.5),
+    new Vector3(17.5, 8.8, 22.5),
+    new Vector3(22.5, 8.8, 22.5),
+  ].forEach((position, index) => {
+    decoration(
+      `guard tower canopy post ${index}`,
+      position,
+      [0.15, 3, 0.15],
+      materials.steel,
+    );
+  });
+  createWarningSign(
+    decoration,
+    materials,
+    "TOWER // OVERWATCH",
+    new Vector3(20, 9.1, 17.35),
+    4.8,
+    "guard tower sign",
+  );
 }
 
-function createStaircase(
+function createCentralCatwalk(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  walkableSurfaces: Mesh[],
+  materials: ArenaMaterials,
+) {
+  const catwalk = solid(
+    "central raised catwalk",
+    new Vector3(0, 3.03, 1),
+    [19, 0.34, 3],
+    materials.steel,
+    { bulletMaterial: "metal", surfaceType: "metal" },
+  );
+  walkableSurfaces.push(catwalk);
+
+  [-7.5, 0, 7.5].forEach((x, index) => {
+    solid(
+      `central catwalk support ${index}`,
+      new Vector3(x, 1.5, 1),
+      [0.55, 3, 0.55],
+      materials.darkConcrete,
+    );
+  });
+  createStairFlight(
+    solid,
+    walkableSurfaces,
+    materials,
+    new Vector3(-16.4, 0, 1),
+    new Vector3(1, 0, 0),
+    9,
+    0.355,
+    0.74,
+    2.2,
+    "central catwalk west stairs",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(0.7, 3.76, -0.42),
+    [17.4, 1.2, 0.14],
+    "central catwalk south railing",
+  );
+  createRailing(
+    solid,
+    materials,
+    new Vector3(0.7, 3.76, 2.42),
+    [17.4, 1.2, 0.14],
+    "central catwalk north railing",
+  );
+  decoration(
+    "central catwalk pipe run",
+    new Vector3(0, 2.45, 1),
+    [15, 0.22, 0.22],
+    materials.containerRed,
+  );
+}
+
+function createMaintenanceArea(
+  scene: Scene,
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  cover: Mesh[],
+  pushableProps: PushablePropDefinition[],
+  materials: ArenaMaterials,
+) {
+  createGenerator(
+    solid,
+    decoration,
+    materials,
+    new Vector3(23, 0, 7),
+    "east backup generator",
+  );
+  createDumpster(
+    solid,
+    decoration,
+    materials,
+    new Vector3(23, 0, -13),
+    "east service dumpster",
+  );
+  createUtilityBox(
+    solid,
+    decoration,
+    materials,
+    new Vector3(13, 0, 8),
+    "east transformer cabinet",
+  );
+  createCableReel(
+    scene,
+    solid,
+    decoration,
+    materials,
+    new Vector3(14, 0, 15),
+  );
+  createBarrelGroup(scene, cover, materials, new Vector3(21, 0, -17));
+  createSandbagWall(
+    solid,
+    materials,
+    new Vector3(10, 0, 23),
+    "north sandbag position",
+  );
+  createPipeRack(solid, decoration, materials, new Vector3(25, 0, 0));
+
+  [
+    new Vector3(16, 0.5, 10),
+    new Vector3(18, 0.5, 11.2),
+  ].forEach((position, index) => {
+    createPushableCone(
+      scene,
+      pushableProps,
+      materials,
+      position,
+      `maintenance traffic cone ${index}`,
+    );
+  });
+}
+
+function createContainer(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  rotation: number,
+  containerMaterial: PBRMaterial,
+  name: string,
+  index: number,
+) {
+  const container = solid(
+    name,
+    position,
+    [8.2, 2.6, 2.5],
+    containerMaterial,
+    { bulletMaterial: "metal" },
+  );
+  container.rotation.y = rotation;
+
+  for (let offset = -3.4; offset <= 3.4; offset += 1.15) {
+    const ribOffset = rotateHorizontalOffset(
+      new Vector3(offset, 0, -1.27),
+      rotation,
+    );
+    const rib = decoration(
+      `${name} corrugation ${index}-${offset}`,
+      position.add(ribOffset),
+      [0.08, 2.2, 0.08],
+      materials.rustedSteel,
+    );
+    rib.rotation.y = rotation;
+  }
+  const doorStripe = decoration(
+    `${name} hazard plate`,
+    position.add(rotateHorizontalOffset(new Vector3(3.95, 0, -1.3), rotation)),
+    [0.18, 1.7, 0.06],
+    materials.safety,
+  );
+  doorStripe.rotation.y = rotation;
+}
+
+function createStairFlight(
   solid: SolidBuilder,
   walkableSurfaces: Mesh[],
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   origin: Vector3,
+  direction: Vector3,
   stepCount: number,
-  rotation: number,
+  stepHeight: number,
+  stepDepth: number,
+  width: number,
   name: string,
-  area: PhysicalOptions["area"],
 ) {
-  const stepHeight = 0.4;
-  const stepDepth = 0.72;
+  const normalizedDirection = direction.clone().normalize();
+  const rotation = Math.atan2(normalizedDirection.x, normalizedDirection.z);
   for (let index = 0; index < stepCount; index += 1) {
     const height = (index + 1) * stepHeight;
-    const local = new Vector3(0, height / 2, index * stepDepth);
-    const rotated = new Vector3(
-      local.x * Math.cos(rotation) + local.z * Math.sin(rotation),
-      local.y,
-      local.z * Math.cos(rotation) - local.x * Math.sin(rotation),
+    const stepPosition = origin
+      .add(normalizedDirection.scale((index + 0.5) * stepDepth))
+      .add(new Vector3(0, height / 2, 0));
+    const step = solid(
+      `${name} ${index}`,
+      stepPosition,
+      [width, height, stepDepth + 0.04],
+      materials.steel,
+      { bulletMaterial: "metal", surfaceType: "metal" },
     );
-    const step = solid(`${name} ${index}`, origin.add(rotated), [3.2, height, stepDepth + 0.04], materials.steel, {
-      area,
-      bulletMaterial: "metal",
-      surfaceType: "metal",
-    });
     step.rotation.y = rotation;
     walkableSurfaces.push(step);
   }
-}
 
-function createOpenGate(
-  solid: SolidBuilder,
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-  width: number,
-  rotation: number,
-  name: string,
-  area: PhysicalOptions["area"],
-) {
-  const across = new Vector3(Math.cos(rotation), 0, -Math.sin(rotation));
-  const left = solid(`${name} left post`, position.add(across.scale(-width / 2)).add(new Vector3(0, 2.7, 0)), [0.75, 5.4, 0.75], materials.darkConcrete, { area });
-  const right = solid(`${name} right post`, position.add(across.scale(width / 2)).add(new Vector3(0, 2.7, 0)), [0.75, 5.4, 0.75], materials.darkConcrete, { area });
-  const beam = decoration(`${name} overhead beam`, position.add(new Vector3(0, 5.1, 0)), [width + 1, 0.65, 0.75], materials.rustedSteel);
-  left.rotation.y = rotation;
-  right.rotation.y = rotation;
-  beam.rotation.y = rotation;
-}
-
-function createGuardBooth(
-  solid: SolidBuilder,
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-  name: string,
-  area: PhysicalOptions["area"],
-) {
-  solid(`${name} body`, position, [4.5, 3.2, 4.5], materials.darkConcrete, { area });
-  decoration(`${name} window`, position.add(new Vector3(0, 0.65, -2.3)), [3.3, 1.15, 0.08], materials.glass);
-  decoration(`${name} roof`, position.add(new Vector3(0, 1.8, 0)), [5, 0.3, 5], materials.rustedSteel);
-}
-
-function createContainerDetails(
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  container: Mesh,
-  index: number,
-) {
-  for (let offset = -5; offset <= 5; offset += 1) {
-    const rib = decoration(`container ${index} corrugation ${offset}`, container.position.add(new Vector3(offset, 0, -1.37)), [0.08, 2.5, 0.08], materials.rustedSteel);
-    rib.rotation.y = container.rotation.y;
+  const sideOffset = new Vector3(
+    normalizedDirection.z,
+    0,
+    -normalizedDirection.x,
+  ).scale(width / 2 + 0.05);
+  for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 3) {
+    const stepTop = (stepIndex + 1) * stepHeight;
+    const postBase = origin
+      .add(normalizedDirection.scale((stepIndex + 0.5) * stepDepth))
+      .add(new Vector3(0, stepTop + 0.62, 0));
+    [sideOffset, sideOffset.scale(-1)].forEach((offset, sideIndex) => {
+      solid(
+        `${name} railing post ${stepIndex}-${sideIndex}`,
+        postBase.add(offset),
+        [0.12, 1.24, 0.12],
+        materials.steel,
+        { bulletMaterial: "metal" },
+      );
+    });
   }
 }
 
-function createWarehouseRack(
+function createRailing(
+  solid: SolidBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  size: [number, number, number],
+  name: string,
+) {
+  solid(name, position, size, materials.steel, { bulletMaterial: "metal" });
+}
+
+function createConcreteBarrier(
+  solid: SolidBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  rotation: number,
+  name: string,
+) {
+  const barrier = solid(
+    name,
+    position,
+    [4.4, 1.3, 0.75],
+    materials.concrete,
+  );
+  barrier.rotation.y = rotation;
+}
+
+function createSecurityBooth(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   position: Vector3,
-  index: number,
-  area: PhysicalOptions["area"],
 ) {
-  solid(`warehouse solid storage rack ${index}`, position, [8.2, 3.6, 1.2], materials.rustedSteel, { area, bulletMaterial: "metal" });
-  [-2.6, 0, 2.6].forEach((offset, crateIndex) => {
-    solid(`warehouse thick stored crate ${index}-${crateIndex}`, position.add(new Vector3(offset, -0.35, 1)), [2.1, 1.8, 1.6], materials.wood, { area, bulletMaterial: "wood" });
-    decoration(`warehouse crate label ${index}-${crateIndex}`, position.add(new Vector3(offset, -0.35, 1.83)), [1.3, 0.55, 0.04], materials.safety);
-  });
+  solid(
+    "arrival security booth body",
+    position,
+    [4.3, 3, 4],
+    materials.containerOlive,
+    { bulletMaterial: "metal" },
+  );
+  decoration(
+    "arrival security booth roof",
+    position.add(new Vector3(0, 1.7, 0)),
+    [4.8, 0.28, 4.5],
+    materials.rustedSteel,
+  );
+  decoration(
+    "arrival security booth front window",
+    position.add(new Vector3(0, 0.55, 2.03)),
+    [2.8, 1.05, 0.06],
+    materials.glass,
+  );
+  createWarningSign(
+    decoration,
+    materials,
+    "SECURITY",
+    position.add(new Vector3(0, 1.25, 2.08)),
+    2.7,
+    "arrival booth security sign",
+  );
+}
+
+function createDamagedTruck(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+) {
+  const cab = solid(
+    "damaged loading truck cab",
+    position,
+    [3.2, 2.5, 3.8],
+    materials.containerOlive,
+    { bulletMaterial: "metal" },
+  );
+  cab.rotation.y = Math.PI / 2;
+  const bed = solid(
+    "damaged loading truck cargo bed",
+    position.add(new Vector3(-4.1, -0.15, 0)),
+    [4.8, 1.8, 3.4],
+    materials.rustedSteel,
+    { bulletMaterial: "metal" },
+  );
+  bed.rotation.y = Math.PI / 2;
+  decoration(
+    "damaged loading truck windshield",
+    position.add(new Vector3(1.93, 0.55, 0)),
+    [0.06, 0.9, 2.3],
+    materials.glass,
+  );
 }
 
 function createForklift(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   position: Vector3,
   rotation: number,
-  name: string,
-  area: PhysicalOptions["area"],
 ) {
-  const body = solid(`${name} solid body`, position, [2.7, 1.55, 3.8], materials.safety, { area, bulletMaterial: "metal" });
-  const mast = solid(`${name} solid mast`, position.add(new Vector3(0, 1.65, 1.5)), [2, 3.3, 0.35], materials.steel, { area, bulletMaterial: "metal" });
-  const forks = solid(`${name} solid forks`, position.add(new Vector3(0, 0.3, 2.6)), [2, 0.18, 1.8], materials.steel, { area, bulletMaterial: "metal" });
+  const body = solid(
+    "loading forklift solid body",
+    position,
+    [2.4, 1.5, 3.2],
+    materials.safety,
+    { bulletMaterial: "metal" },
+  );
+  const mast = solid(
+    "loading forklift solid mast",
+    position.add(new Vector3(0, 1.55, 1.25)),
+    [1.7, 3.1, 0.3],
+    materials.steel,
+    { bulletMaterial: "metal" },
+  );
+  const forks = solid(
+    "loading forklift solid forks",
+    position.add(new Vector3(0, -0.58, 2.15)),
+    [1.7, 0.16, 1.7],
+    materials.steel,
+    { bulletMaterial: "metal" },
+  );
   body.rotation.y = rotation;
   mast.rotation.y = rotation;
   forks.rotation.y = rotation;
-  decoration(`${name} warning light`, position.add(new Vector3(0, 2.7, 0)), [0.35, 0.2, 0.35], materials.glow);
+  decoration(
+    "loading forklift warning light",
+    position.add(new Vector3(0, 2.45, 0)),
+    [0.28, 0.18, 0.28],
+    materials.glow,
+  );
 }
 
-function createTruck(
+function createPalletLoad(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   position: Vector3,
-  rotation: number,
   name: string,
-  area: PhysicalOptions["area"],
 ) {
-  const cab = solid(`${name} solid cab`, position, [3.2, 2.8, 4.2], materials.paintedSteel, { area, bulletMaterial: "metal" });
-  const cargo = solid(`${name} solid cargo bed`, position.add(new Vector3(0, 0.25, -4.3)), [3.5, 2.3, 5.2], materials.rustedSteel, { area, bulletMaterial: "metal" });
-  cab.rotation.y = rotation;
-  cargo.rotation.y = rotation;
-  decoration(`${name} windshield`, position.add(new Vector3(0, 0.65, 2.12)), [2.4, 1.1, 0.06], materials.glass).rotation.y = rotation;
+  decoration(
+    `${name} grounded pallet`,
+    position.add(new Vector3(0, 0.1, 0)),
+    [3.3, 0.2, 2.5],
+    materials.wood,
+  );
+  solid(
+    `${name} solid cargo`,
+    position.add(new Vector3(0, 1, 0)),
+    [3, 1.8, 2.2],
+    materials.wood,
+    { bulletMaterial: "wood" },
+  );
+  decoration(
+    `${name} yellow strap`,
+    position.add(new Vector3(0, 1, -1.12)),
+    [0.22, 1.6, 0.04],
+    materials.safety,
+  );
 }
 
-function createPalletStack(
+function createCrateCluster(
   solid: SolidBuilder,
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   position: Vector3,
   name: string,
-  area: PhysicalOptions["area"],
 ) {
-  solid(`${name} solid load`, position.add(new Vector3(0, 0.65, 0)), [4.2, 2.5, 2.8], materials.wood, { area, bulletMaterial: "wood" });
-  decoration(`${name} lower pallet`, position, [4.5, 0.2, 3.1], materials.wood);
-  decoration(`${name} strap`, position.add(new Vector3(0, 0.7, -1.43)), [0.25, 2.4, 0.05], materials.safety);
+  const crates: Array<[Vector3, [number, number, number]]> = [
+    [new Vector3(0, 0.75, 0), [2.2, 1.5, 2]],
+    [new Vector3(2.1, 0.6, 0.4), [1.7, 1.2, 1.7]],
+    [new Vector3(0.3, 2, 0.1), [1.6, 1, 1.5]],
+  ];
+  crates.forEach(([offset, size], index) => {
+    solid(
+      `${name} ${index}`,
+      position.add(offset),
+      size,
+      materials.wood,
+      { bulletMaterial: "wood" },
+    );
+    decoration(
+      `${name} label ${index}`,
+      position.add(offset).add(new Vector3(0, 0, size[2] / 2 + 0.025)),
+      [size[0] * 0.55, size[1] * 0.35, 0.04],
+      materials.safety,
+    );
+  });
 }
 
-function createConcreteBarrier(
+function createUtilityBox(
   solid: SolidBuilder,
-  materials: DistrictMaterials,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
   position: Vector3,
-  rotation: number,
   name: string,
-  area: PhysicalOptions["area"],
 ) {
-  const barrier = solid(name, position, [5.5, 1.3, 0.75], materials.concrete, { area, bulletMaterial: "concrete" });
-  barrier.rotation.y = rotation;
+  solid(
+    `${name} solid housing`,
+    position.add(new Vector3(0, 1.2, 0)),
+    [2.2, 2.4, 1.2],
+    materials.containerOlive,
+    { bulletMaterial: "metal" },
+  );
+  decoration(
+    `${name} warning plate`,
+    position.add(new Vector3(0, 1.35, 0.63)),
+    [0.8, 0.65, 0.04],
+    materials.safety,
+  );
+}
+
+function createGenerator(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  name: string,
+) {
+  solid(
+    `${name} solid body`,
+    position.add(new Vector3(0, 0.8, 0)),
+    [4, 1.6, 2.2],
+    materials.containerOlive,
+    { bulletMaterial: "metal" },
+  );
+  decoration(
+    `${name} top grille`,
+    position.add(new Vector3(0, 1.63, 0)),
+    [2.7, 0.05, 1.3],
+    materials.steel,
+  );
+  decoration(
+    `${name} control panel`,
+    position.add(new Vector3(2.03, 0.9, 0)),
+    [0.05, 0.8, 1.1],
+    materials.glow,
+  );
+}
+
+function createDumpster(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  name: string,
+) {
+  solid(
+    `${name} solid body`,
+    position.add(new Vector3(0, 0.8, 0)),
+    [4, 1.6, 2.4],
+    materials.containerBlue,
+    { bulletMaterial: "metal" },
+  );
+  const lid = decoration(
+    `${name} lid`,
+    position.add(new Vector3(0, 1.72, 0)),
+    [4.1, 0.16, 2.5],
+    materials.rustedSteel,
+  );
+  lid.rotation.z = -0.08;
+}
+
+function createCableReel(
+  scene: Scene,
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+) {
+  solid(
+    "maintenance cable reel solid core",
+    position.add(new Vector3(0, 0.9, 0)),
+    [1.1, 1.8, 1.1],
+    materials.wood,
+    { bulletMaterial: "wood" },
+  );
+  [-0.72, 0.72].forEach((x, index) => {
+    const side = MeshBuilder.CreateCylinder(
+      `maintenance cable reel side ${index}`,
+      { height: 0.16, diameter: 2.4, tessellation: 16 },
+      scene,
+    );
+    side.position.copyFrom(position.add(new Vector3(x, 0.9, 0)));
+    side.rotation.z = Math.PI / 2;
+    side.material = materials.wood;
+    side.isPickable = false;
+    side.metadata = { physicsCategory: "decoration" };
+    decoration(
+      `maintenance cable reel brace ${index}`,
+      position.add(new Vector3(x, 0.35, 0)),
+      [0.2, 0.7, 1.8],
+      materials.wood,
+    );
+  });
+}
+
+function createBarrelGroup(
+  scene: Scene,
+  cover: Mesh[],
+  materials: ArenaMaterials,
+  origin: Vector3,
+) {
+  [
+    new Vector3(0, 0, 0),
+    new Vector3(1.3, 0, 0.2),
+    new Vector3(0.6, 0, 1.2),
+  ].forEach((offset, index) => {
+    const position = origin.add(offset);
+    const barrel = MeshBuilder.CreateCylinder(
+      `solid maintenance barrel ${index}`,
+      { height: 1.5, diameter: 0.9, tessellation: 16 },
+      scene,
+    );
+    barrel.position.copyFrom(position.add(new Vector3(0, 0.75, 0)));
+    barrel.material = index === 1
+      ? materials.containerRed
+      : materials.containerOlive;
+    barrel.checkCollisions = true;
+    barrel.isPickable = true;
+    barrel.receiveShadows = true;
+    barrel.metadata = {
+      bulletMaterial: "metal" satisfies BulletMaterial,
+      collisionCategory: "solid-cover",
+      collisionShape: "cylinder",
+      physicsCategory: "solid",
+    };
+    cover.push(barrel);
+  });
+}
+
+function createSandbagWall(
+  solid: SolidBuilder,
+  materials: ArenaMaterials,
+  origin: Vector3,
+  name: string,
+) {
+  for (let row = 0; row < 2; row += 1) {
+    for (let column = 0; column < 4 - row; column += 1) {
+      solid(
+        `${name} ${row}-${column}`,
+        origin.add(new Vector3(
+          column * 1.3 + row * 0.65,
+          0.32 + row * 0.58,
+          0,
+        )),
+        [1.2, 0.58, 0.72],
+        materials.sandbag,
+        { bulletMaterial: "concrete" },
+      );
+    }
+  }
+}
+
+function createPipeRack(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  origin: Vector3,
+) {
+  solid(
+    "east pipe rack support south",
+    origin.add(new Vector3(0, 1.8, -3)),
+    [0.5, 3.6, 0.5],
+    materials.steel,
+    { bulletMaterial: "metal" },
+  );
+  solid(
+    "east pipe rack support north",
+    origin.add(new Vector3(0, 1.8, 3)),
+    [0.5, 3.6, 0.5],
+    materials.steel,
+    { bulletMaterial: "metal" },
+  );
+  [-0.45, 0.45].forEach((x, index) => {
+    decoration(
+      `east elevated service pipe ${index}`,
+      origin.add(new Vector3(x, 3.1, 0)),
+      [0.32, 0.32, 6.5],
+      index === 0 ? materials.containerRed : materials.steel,
+    );
+  });
+}
+
+function createHazardMarking(
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  position: Vector3,
+  size: [number, number, number],
+  name: string,
+) {
+  decoration(name, position, size, materials.safety);
 }
 
 function createPushableCone(
   scene: Scene,
   pushableProps: PushablePropDefinition[],
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   position: Vector3,
   name: string,
 ) {
@@ -608,119 +1284,91 @@ function createPushableCone(
     physicsCategory: "pushable",
     propKind: "cone",
   };
-  pushableProps.push({ mesh: cone, radius: 0.42, halfHeight: 0.5, mass: 0.65 });
-}
-
-function createPushableBox(
-  scene: Scene,
-  pushableProps: PushablePropDefinition[],
-  materials: DistrictMaterials,
-  position: Vector3,
-  name: string,
-) {
-  const box = MeshBuilder.CreateBox(name, { size: 0.9 }, scene);
-  box.position.copyFrom(position);
-  box.material = materials.wood;
-  box.isPickable = true;
-  box.receiveShadows = true;
-  box.metadata = {
-    bulletMaterial: "wood" satisfies BulletMaterial,
-    physicsCategory: "pushable",
-    propKind: "box",
-  };
-  pushableProps.push({ mesh: box, radius: 0.6, halfHeight: 0.45, mass: 1.2 });
-}
-
-function createDoorFrame(
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-  rotation: number,
-  name: string,
-) {
-  const across = new Vector3(Math.cos(rotation), 0, -Math.sin(rotation));
-  const left = decoration(`${name} left frame`, position.add(across.scale(-1.55)), [0.24, 3.6, 0.3], materials.rustedSteel);
-  const right = decoration(`${name} right frame`, position.add(across.scale(1.55)), [0.24, 3.6, 0.3], materials.rustedSteel);
-  const header = decoration(`${name} header`, position.add(new Vector3(0, 1.7, 0)), [3.35, 0.25, 0.3], materials.rustedSteel);
-  left.rotation.y = rotation;
-  right.rotation.y = rotation;
-  header.rotation.y = rotation;
-}
-
-function createOfficeFurniture(
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-  name: string,
-) {
-  decoration(`${name} desk`, position, [5.4, 1.3, 1.4], materials.wood);
-  decoration(`${name} monitor left`, position.add(new Vector3(-1.4, 1.05, -0.55)), [1.1, 0.8, 0.12], materials.glass);
-  decoration(`${name} monitor right`, position.add(new Vector3(1.4, 1.05, -0.55)), [1.1, 0.8, 0.12], materials.glass);
-}
-
-function createControlBank(
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-  name: string,
-) {
-  const bank = decoration(name, position, [7.2, 0.9, 1.3], materials.darkConcrete);
-  bank.rotation.x = -0.18;
-  decoration(`${name} amber display`, position.add(new Vector3(-2, 0.55, -0.68)), [1.7, 0.42, 0.05], materials.glow);
-  decoration(`${name} blue display`, position.add(new Vector3(2, 0.55, -0.68)), [1.7, 0.42, 0.05], materials.glass);
-}
-
-function createCommunicationsTower(
-  scene: Scene,
-  decoration: DecorationBuilder,
-  materials: DistrictMaterials,
-  position: Vector3,
-) {
-  const mast = MeshBuilder.CreateCylinder("command communications landmark", {
-    height: 21,
-    diameterTop: 0.4,
-    diameterBottom: 1.8,
-    tessellation: 10,
-  }, scene);
-  mast.position.copyFrom(position);
-  mast.material = materials.steel;
-  mast.isPickable = false;
-  mast.metadata = { physicsCategory: "decoration" };
-  [4, 9, 14].forEach((offset, index) => {
-    decoration(`command mast beacon ${index}`, position.add(new Vector3(0, offset - 10.5, 0)), [0.7, 0.24, 0.7], materials.glow);
+  pushableProps.push({
+    mesh: cone,
+    radius: 0.42,
+    halfHeight: 0.5,
+    mass: 0.65,
   });
 }
 
-function createSign(
+function createWarningSign(
   decoration: DecorationBuilder,
-  materials: DistrictMaterials,
+  materials: ArenaMaterials,
   text: string,
   position: Vector3,
   width: number,
-  height: number,
   name: string,
 ) {
-  const texture = new DynamicTexture(`${name} texture`, { width: 1024, height: 128 }, materials.darkConcrete.getScene(), false);
+  const texture = new DynamicTexture(
+    `${name} texture`,
+    { width: 1024, height: 128 },
+    sceneOf(materials),
+    false,
+  );
   const context = texture.getContext();
-  context.fillStyle = "#101516";
+  context.fillStyle = "#111719";
   context.fillRect(0, 0, 1024, 128);
-  context.fillStyle = "#e4b65f";
-  context.font = "bold 42px Arial";
-  context.fillText(text, 90, 78);
+  context.fillStyle = "#e6b74f";
+  context.font = "bold 44px Arial";
+  context.fillText(text, 64, 82);
   texture.update();
-  const signMaterial = new StandardMaterial(`${name} material`, materials.darkConcrete.getScene());
+  const signMaterial = new StandardMaterial(`${name} material`, sceneOf(materials));
   signMaterial.diffuseTexture = texture;
-  signMaterial.emissiveColor = new Color3(0.14, 0.1, 0.03);
-  const sign = decoration(name, position, [width, height, 0.08], signMaterial);
-  sign.rotation.y = Math.PI;
+  signMaterial.emissiveColor = new Color3(0.13, 0.09, 0.02);
+  decoration(name, position, [width, 0.9, 0.08], signMaterial);
+}
+
+function createLighting(
+  scene: Scene,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+) {
+  const fixtures: Array<[Vector3, number, Color3]> = [
+    [new Vector3(-23, 5.5, -21), 0.8, new Color3(1, 0.46, 0.16)],
+    [new Vector3(-15, 5.4, 8), 0.72, new Color3(0.4, 0.62, 0.74)],
+    [new Vector3(0, 5.8, 1), 0.78, new Color3(1, 0.46, 0.15)],
+    [new Vector3(-6, 6.2, 14), 0.82, new Color3(1, 0.42, 0.12)],
+    [new Vector3(21, 8.8, 20), 0.72, new Color3(0.42, 0.65, 0.78)],
+    [new Vector3(23, 5.1, -9), 0.76, new Color3(1, 0.45, 0.14)],
+  ];
+
+  fixtures.forEach(([position, intensity, color], index) => {
+    decoration(
+      `industrial light fixture ${index}`,
+      position,
+      [0.65, 0.2, 0.65],
+      materials.glow,
+    );
+    const light = new PointLight(
+      `industrial light ${index}`,
+      position.add(new Vector3(0, -0.2, 0)),
+      scene,
+    );
+    light.diffuse = color;
+    light.intensity = intensity;
+    light.range = 14;
+  });
+}
+
+function rotateHorizontalOffset(offset: Vector3, rotation: number) {
+  return new Vector3(
+    offset.x * Math.cos(rotation) + offset.z * Math.sin(rotation),
+    offset.y,
+    offset.z * Math.cos(rotation) - offset.x * Math.sin(rotation),
+  );
 }
 
 function createSky(scene: Scene, decorativeMeshes: Mesh[]) {
-  const sky = MeshBuilder.CreateSphere("storm-clear late afternoon sky", { diameter: 700, segments: 24 }, scene);
-  const material = new StandardMaterial("storm-clear sky material", scene);
+  const sky = MeshBuilder.CreateSphere(
+    "overcast industrial yard sky",
+    { diameter: 260, segments: 20 },
+    scene,
+  );
+  const material = new StandardMaterial("overcast sky material", scene);
   material.backFaceCulling = false;
-  material.emissiveColor = new Color3(0.12, 0.17, 0.2);
-  material.diffuseColor = new Color3(0.08, 0.12, 0.16);
+  material.emissiveColor = new Color3(0.13, 0.19, 0.21);
+  material.diffuseColor = new Color3(0.08, 0.12, 0.14);
   sky.material = material;
   sky.isPickable = false;
   sky.metadata = { physicsCategory: "decoration" };
@@ -734,33 +1382,94 @@ function freezeStaticEnvironment(scene: Scene) {
   scene.materials.forEach((material) => material.freeze());
 }
 
-function createDistrictMaterials(scene: Scene) {
-  const asphalt = material(scene, "rain-dark asphalt", new Color3(0.16, 0.17, 0.17), "asphalt");
-  const concrete = material(scene, "weathered structural concrete", new Color3(0.58, 0.57, 0.52), "concrete");
-  const darkConcrete = material(scene, "damp dark concrete", new Color3(0.34, 0.36, 0.34), "concrete");
-  const steel = material(scene, "worn blue steel", new Color3(0.22, 0.3, 0.32), "steel");
-  const rustedSteel = material(scene, "rusted steel", new Color3(0.34, 0.21, 0.13), "steel");
-  const paintedSteel = material(scene, "faded military green", new Color3(0.28, 0.36, 0.29), "paint");
-  const containerBlue = material(scene, "faded container blue", new Color3(0.12, 0.29, 0.4), "paint");
-  const containerRed = material(scene, "oxide container red", new Color3(0.42, 0.14, 0.1), "paint");
-  const containerSand = material(scene, "dusty container sand", new Color3(0.48, 0.38, 0.23), "paint");
-  const wood = material(scene, "aged warehouse timber", new Color3(0.28, 0.18, 0.1), "wood");
-  const safety = material(scene, "warning yellow paint", new Color3(0.82, 0.47, 0.08), "paint");
-  const glass = material(scene, "smoky office glass", new Color3(0.08, 0.17, 0.2), "glass");
-  const glow = new StandardMaterial("warm sodium fixture", scene);
-  glow.emissiveColor = new Color3(1, 0.42, 0.12);
+function createArenaMaterials(scene: Scene) {
+  const asphalt = material(
+    scene,
+    "rain dark asphalt",
+    new Color3(0.15, 0.17, 0.17),
+    "asphalt",
+  );
+  const concrete = material(
+    scene,
+    "weathered grey concrete",
+    new Color3(0.52, 0.51, 0.47),
+    "concrete",
+  );
+  const darkConcrete = material(
+    scene,
+    "damp dark concrete",
+    new Color3(0.3, 0.33, 0.32),
+    "concrete",
+  );
+  const steel = material(
+    scene,
+    "dark structural metal",
+    new Color3(0.2, 0.28, 0.3),
+    "steel",
+  );
+  const rustedSteel = material(
+    scene,
+    "warm rusted steel",
+    new Color3(0.36, 0.2, 0.12),
+    "steel",
+  );
+  const containerBlue = material(
+    scene,
+    "faded blue container paint",
+    new Color3(0.1, 0.3, 0.47),
+    "paint",
+  );
+  const containerRed = material(
+    scene,
+    "oxide red container paint",
+    new Color3(0.48, 0.12, 0.08),
+    "paint",
+  );
+  const containerOlive = material(
+    scene,
+    "muted olive industrial paint",
+    new Color3(0.3, 0.4, 0.24),
+    "paint",
+  );
+  const wood = material(
+    scene,
+    "aged pallet timber",
+    new Color3(0.34, 0.21, 0.1),
+    "wood",
+  );
+  const sandbag = material(
+    scene,
+    "weathered sandbags",
+    new Color3(0.43, 0.39, 0.27),
+    "concrete",
+  );
+  const safety = material(
+    scene,
+    "controlled safety orange",
+    new Color3(0.9, 0.4, 0.035),
+    "paint",
+  );
+  const glass = material(
+    scene,
+    "smoky security glass",
+    new Color3(0.07, 0.17, 0.2),
+    "glass",
+  );
+  const glow = new StandardMaterial("warm industrial fixture", scene);
+  glow.emissiveColor = new Color3(1, 0.42, 0.1);
   glow.diffuseColor = new Color3(0.1, 0.04, 0.01);
+
   return {
     asphalt,
     concrete,
     darkConcrete,
     steel,
     rustedSteel,
-    paintedSteel,
     containerBlue,
     containerRed,
-    containerSand,
+    containerOlive,
     wood,
+    sandbag,
     safety,
     glass,
     glow,
@@ -775,29 +1484,52 @@ function material(
 ) {
   const result = new PBRMaterial(name, scene);
   result.albedoColor = color;
-  result.metallic = surface === "steel" ? 0.68 : surface === "glass" ? 0.34 : 0.04;
-  result.roughness = surface === "steel" ? 0.48 : surface === "glass" ? 0.18 : surface === "asphalt" ? 0.82 : 0.76;
-  result.environmentIntensity = surface === "glass" ? 0.7 : 0.35;
+  result.metallic = surface === "steel"
+    ? 0.68
+    : surface === "glass"
+      ? 0.34
+      : 0.04;
+  result.roughness = surface === "steel"
+    ? 0.46
+    : surface === "glass"
+      ? 0.18
+      : surface === "asphalt"
+        ? 0.82
+        : 0.74;
+  result.environmentIntensity = surface === "glass" ? 0.7 : 0.38;
+
   if (surface === "glass") {
-    result.alpha = 0.76;
+    result.alpha = 0.72;
     result.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
   }
+
   if (surface === "asphalt" || surface === "concrete") {
-    const groundTexture = new Texture("/assets/industrial-ground-generated.png", scene, true, false);
-    groundTexture.uScale = surface === "asphalt" ? 12 : 5;
-    groundTexture.vScale = surface === "asphalt" ? 10 : 5;
+    const groundTexture = new Texture(
+      "/assets/industrial-ground-generated.png",
+      scene,
+      true,
+      false,
+    );
+    groundTexture.uScale = surface === "asphalt" ? 7 : 3;
+    groundTexture.vScale = surface === "asphalt" ? 7 : 3;
     result.albedoTexture = groundTexture;
     return result;
   }
-  const texture = new DynamicTexture(`${name} weathering`, { width: 256, height: 256 }, scene, false);
+
+  const texture = new DynamicTexture(
+    `${name} weathering`,
+    { width: 256, height: 256 },
+    scene,
+    false,
+  );
   const context = texture.getContext();
   context.fillStyle = `rgb(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)})`;
   context.fillRect(0, 0, 256, 256);
-  context.fillStyle = "rgba(220, 186, 118, 0.11)";
-  for (let index = 0; index < 30; index += 1) {
+  context.fillStyle = "rgba(220, 186, 118, 0.12)";
+  for (let index = 0; index < 28; index += 1) {
     const x = (index * 43 + 19) % 256;
     const y = (index * 71 + 7) % 256;
-    context.fillRect(x, y, 2 + (index % 4), 18 + ((index * 13) % 28));
+    context.fillRect(x, y, 2 + (index % 4), 15 + ((index * 13) % 30));
   }
   texture.wrapU = Texture.WRAP_ADDRESSMODE;
   texture.wrapV = Texture.WRAP_ADDRESSMODE;
@@ -808,6 +1540,6 @@ function material(
   return result;
 }
 
-function sceneOf(materials: DistrictMaterials) {
+function sceneOf(materials: ArenaMaterials) {
   return materials.asphalt.getScene();
 }

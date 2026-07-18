@@ -28,9 +28,9 @@ export class GameUI {
   showStart(actions: MenuActions) {
     this.root.innerHTML = `
       <main class="menu menu--main">
-        <p class="eyebrow">ABANDONED INDUSTRIAL SECURITY DISTRICT</p>
+        <p class="eyebrow">COMPACT INDUSTRIAL COMBAT YARD</p>
         <h1>BLACKSITE<br><em>RAINLINE</em></h1>
-        <p class="lede">Late afternoon. Light rain. Three tightly connected industrial combat areas surrounding a compromised command site.</p>
+        <p class="lede">Late afternoon. Light rain. One dense sixty-metre yard built around containers, a warehouse, rooftop routes, and an accessible guard tower.</p>
         <div class="menu-actions">
           <button id="start-match" class="primary-action">Start Mission</button>
           <button id="show-settings" class="quiet-action">Settings</button>
@@ -52,7 +52,7 @@ export class GameUI {
           <span><b>R</b> Reload</span>
           <span><b>Esc</b> Pause</span>
         </section>
-        <p class="small">The mouse locks after the mission starts. Jumping provides low-cover shortcuts; every major route also has stairs or ramps.</p>
+        <p class="small">The mouse locks after the mission starts. Every elevated combat route has a grounded staircase or landing.</p>
       </main>`;
     this.bindStartActions(actions);
   }

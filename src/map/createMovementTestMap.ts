@@ -120,7 +120,7 @@ export function createMovementTestMap(scene: Scene): MapData {
     { width: 8, height: 0.4, depth: 8 },
     scene,
   );
-  lowCeiling.position.set(0, 2.7, -7);
+  lowCeiling.position.set(0, 2.5, -7);
   lowCeiling.material = obstacleMaterial;
   lowCeiling.checkCollisions = true;
   lowCeiling.isPickable = true;

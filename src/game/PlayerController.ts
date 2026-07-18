@@ -79,8 +79,8 @@ export class PlayerController {
   private grounded = false;
   private jumpActive = false;
   private jumpPressConsumed = false;
+  private jumpBufferRemaining = 0;
   private justLanded = false;
-  private landingRecoveryRemaining = 0;
   private collidedMesh?: AbstractMesh;
   private speedSamples: SpeedSample[] = [];
   private sampledDistance = 0;
@@ -118,17 +118,22 @@ export class PlayerController {
 
   update(input: PlayerMovementInput, deltaSeconds: number) {
     this.justLanded = false;
-    this.landingRecoveryRemaining = Math.max(0, this.landingRecoveryRemaining - deltaSeconds);
+    this.jumpBufferRemaining = Math.max(
+      0,
+      this.jumpBufferRemaining - deltaSeconds,
+    );
     if (!input.jumpPressed) {
       this.jumpPressConsumed = false;
     }
     if (input.jumpPressed && !this.jumpPressConsumed) {
       this.jumpPressConsumed = true;
-      if (this.grounded && this.landingRecoveryRemaining === 0) {
-        this.verticalVelocity = GAME_CONFIG.player.jumpInitialVelocity;
-        this.grounded = false;
-        this.jumpActive = true;
-      }
+      this.jumpBufferRemaining = GAME_CONFIG.player.jumpBufferSeconds;
+    }
+    if (this.grounded && this.jumpBufferRemaining > 0) {
+      this.verticalVelocity = GAME_CONFIG.player.jumpInitialVelocity;
+      this.grounded = false;
+      this.jumpActive = true;
+      this.jumpBufferRemaining = 0;
     }
 
     const desiredVelocity = calculateDesiredHorizontalVelocity(
@@ -147,11 +152,11 @@ export class PlayerController {
         : GAME_CONFIG.player.groundDeceleration
       : hasInput
         ? GAME_CONFIG.player.groundAcceleration * GAME_CONFIG.player.airControlMultiplier
-        : 0;
+        : GAME_CONFIG.player.airDeceleration;
     const velocityBeforeCollision = this.horizontalVelocity.clone();
     const nextVelocity = moveHorizontalVelocityToward(
       this.horizontalVelocity,
-      !this.grounded && !hasInput ? this.horizontalVelocity : desiredVelocity,
+      desiredVelocity,
       acceleration * deltaSeconds,
     );
 
@@ -245,8 +250,8 @@ export class PlayerController {
     this.grounded = false;
     this.jumpActive = false;
     this.jumpPressConsumed = false;
+    this.jumpBufferRemaining = 0;
     this.justLanded = false;
-    this.landingRecoveryRemaining = 0;
     this.speedSamples = [];
     this.sampledDistance = 0;
     this.sampledSeconds = 0;
@@ -292,7 +297,6 @@ export class PlayerController {
         this.grounded = true;
         this.justLanded = this.jumpActive;
         this.jumpActive = false;
-        this.landingRecoveryRemaining = GAME_CONFIG.player.landingRecoverySeconds;
       }
     }
 
