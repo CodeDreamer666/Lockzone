@@ -486,22 +486,16 @@ function createWarehouse(
     0.74,
     2.3,
     "warehouse rooftop stairs",
+    5,
   );
   const roofBridge = solid(
     "warehouse rooftop stair landing",
-    new Vector3(6.4, 4.82, 16.1),
-    [3.8, 0.36, 3],
+    new Vector3(7.075, 4.82, 17.94),
+    [4.15, 0.36, 3],
     materials.steel,
     { bulletMaterial: "metal", surfaceType: "metal" },
   );
   walkableSurfaces.push(roofBridge);
-  createRailing(
-    solid,
-    materials,
-    new Vector3(8.1, 5.48, 15.8),
-    [0.14, 1.25, 3.7],
-    "warehouse stair landing east railing",
-  );
   createRailing(
     solid,
     materials,
@@ -887,11 +881,15 @@ function createStairFlight(
   stepDepth: number,
   width: number,
   name: string,
+  finalStepTop?: number,
 ) {
   const normalizedDirection = direction.clone().normalize();
   const rotation = Math.atan2(normalizedDirection.x, normalizedDirection.z);
   for (let index = 0; index < stepCount; index += 1) {
-    const height = (index + 1) * stepHeight;
+    const height =
+      index === stepCount - 1 && finalStepTop !== undefined
+        ? finalStepTop
+        : (index + 1) * stepHeight;
     const stepPosition = origin
       .add(normalizedDirection.scale((index + 0.5) * stepDepth))
       .add(new Vector3(0, height / 2, 0));
@@ -917,6 +915,14 @@ function createStairFlight(
       .add(normalizedDirection.scale((stepIndex + 0.5) * stepDepth))
       .add(new Vector3(0, stepTop + 0.62, 0));
     [sideOffset, sideOffset.scale(-1)].forEach((offset, sideIndex) => {
+      if (
+        name === "guard tower metal stairs" &&
+        stepIndex === 15 &&
+        sideIndex === 1
+      ) {
+        return;
+      }
+
       solid(
         `${name} railing post ${stepIndex}-${sideIndex}`,
         postBase.add(offset),
