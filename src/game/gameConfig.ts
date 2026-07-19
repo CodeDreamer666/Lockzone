@@ -25,9 +25,7 @@ export const GAME_CONFIG = {
     hipSpread: 0.012,
   },
   regeneration: { delayMs: 2000, healthPerSecond: 20 },
-  matchDurationSeconds: 300,
   bot: {
-    count: 10,
     detectionRange: 30,
     fieldOfViewRadians: 1.85,
     perceptionSeconds: 0.2,
@@ -37,3 +35,70 @@ export const GAME_CONFIG = {
     personalSpace: 2.2,
   },
 } as const;
+
+export interface WaveConfig {
+  number: 1 | 2 | 3;
+  totalEnemies: number;
+  durationSeconds: number;
+  maximumAlive: number;
+  movementMultiplier: number;
+  reactionMultiplier: number;
+  accuracyMultiplier: number;
+  perceptionMultiplier: number;
+  decisionMultiplier: number;
+  aggressionMultiplier: number;
+  damageMultiplier: number;
+  elevatedSpawnFrequency: number;
+  replacementDelayMs: number;
+}
+
+export const WAVE_CONFIGS: readonly WaveConfig[] = [
+  {
+    number: 1,
+    totalEnemies: 15,
+    durationSeconds: 3 * 60,
+    maximumAlive: 5,
+    movementMultiplier: 1,
+    reactionMultiplier: 1,
+    accuracyMultiplier: 1,
+    perceptionMultiplier: 1,
+    decisionMultiplier: 1,
+    aggressionMultiplier: 1,
+    damageMultiplier: 1,
+    elevatedSpawnFrequency: 5,
+    replacementDelayMs: 850,
+  },
+  {
+    number: 2,
+    totalEnemies: 20,
+    durationSeconds: 5 * 60,
+    maximumAlive: 6,
+    movementMultiplier: 1.12,
+    reactionMultiplier: 0.78,
+    accuracyMultiplier: 1.16,
+    perceptionMultiplier: 0.82,
+    decisionMultiplier: 0.78,
+    aggressionMultiplier: 1.16,
+    damageMultiplier: 1,
+    elevatedSpawnFrequency: 4,
+    replacementDelayMs: 720,
+  },
+  {
+    number: 3,
+    totalEnemies: 28,
+    durationSeconds: 8 * 60,
+    maximumAlive: 7,
+    movementMultiplier: 1.22,
+    reactionMultiplier: 0.62,
+    accuracyMultiplier: 1.32,
+    perceptionMultiplier: 0.68,
+    decisionMultiplier: 0.62,
+    aggressionMultiplier: 1.3,
+    damageMultiplier: 1.15,
+    elevatedSpawnFrequency: 3,
+    replacementDelayMs: 620,
+  },
+] as const;
+
+export const WAVE_TRANSITION_SECONDS = 8;
+export const OPENING_COUNTDOWN_SECONDS = 3;

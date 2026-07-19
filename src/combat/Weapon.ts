@@ -32,8 +32,19 @@ export class Weapon {
     }, GAME_CONFIG.weapon.reloadMs);
     return true;
   }
+  refill() {
+    this.cancelReload();
+    this.magazine = GAME_CONFIG.weapon.magazineSize;
+    this.isReloading = false;
+  }
   dispose() {
+    this.cancelReload();
+  }
+
+  private cancelReload() {
     if (this.reloadTimer !== undefined) window.clearTimeout(this.reloadTimer);
     if (this.reloadStageTimer !== undefined) window.clearTimeout(this.reloadStageTimer);
+    this.reloadTimer = undefined;
+    this.reloadStageTimer = undefined;
   }
 }
