@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "verify:movement": "node --experimental-strip-types scripts/verify-movement.mjs",
     "verify:jump": "node --experimental-strip-types scripts/verify-jump.mjs",
-    "verify:props": "node --experimental-strip-types scripts/verify-pushable-props.mjs"
+    "verify:props": "node --experimental-strip-types scripts/verify-pushable-props.mjs",
+    "verify:combat": "node --experimental-strip-types scripts/verify-combat-balance.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^8.2.0",
