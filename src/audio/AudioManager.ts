@@ -100,6 +100,20 @@ export class AudioManager {
     this.playTone(profile.body * pitch, 0.065, surface === "metal" ? "triangle" : "sine", volume * 0.55);
   }
 
+  playBotFootstep(position: Vector3) {
+    if (!this.canPlay() || !this.context) {
+      return;
+    }
+
+    const distance = Vector3.Distance(position, this.listenerPosition);
+    if (distance > 32) {
+      return;
+    }
+    const volume = Math.min(0.045, 0.035 * Math.max(0.25, 1 - distance / 36));
+    this.playNoiseBurst(0.065, 920, "bandpass", volume, undefined, position);
+    this.playTone(76 + Math.random() * 10, 0.055, "sine", volume * 0.55, position);
+  }
+
   playLanding(surface: SurfaceType, intensity = 1) {
     if (!this.canPlay() || !this.context) {
       return;

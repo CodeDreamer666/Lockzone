@@ -98,6 +98,7 @@ export class GameUI {
           <span><b>Space</b> Jump</span>
           <span><b>Mouse</b> Look</span>
           <span><b>Left click</b> Fire</span>
+          <span><b>Right click</b> Aim</span>
           <span><b>R</b> Reload</span>
           <span><b>Esc</b> Pause</span>
         </section>
@@ -128,7 +129,7 @@ export class GameUI {
           </div>
         </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
+          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
         </section>
       </main>`;
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
@@ -145,6 +146,13 @@ export class GameUI {
         <div id="timer">03:00</div>
       </div>
       <div class="crosshair" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <div class="scope-overlay" aria-hidden="true">
+        <div class="scope-lens">
+          <span class="scope-line scope-line--horizontal"></span>
+          <span class="scope-line scope-line--vertical"></span>
+          <span class="scope-dot"></span>
+        </div>
+      </div>
       <div id="feedback"></div>
       <div id="wave-announcement" class="wave-announcement" hidden>
         <strong id="announcement-title"></strong>
@@ -166,10 +174,14 @@ export class GameUI {
       </div>`;
   }
 
+  setAiming(aiming: boolean) {
+    this.root.classList.toggle("is-aiming", aiming);
+  }
+
   update(values: HudValues) {
     this.setText("wave", `WAVE ${values.wave} / ${values.totalWaves}`);
     this.setText("health", String(Math.round(values.health)));
-    this.setText("ammo", `${values.magazine} / ∞`);
+    this.setText("ammo", String(values.magazine));
     this.setText("enemies-alive", String(values.enemiesAlive));
     this.setText("enemies-remaining", String(values.enemiesRemaining));
     const totalSeconds = Math.ceil(values.remaining);

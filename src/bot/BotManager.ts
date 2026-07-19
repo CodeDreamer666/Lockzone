@@ -37,6 +37,7 @@ export class BotManager {
   constructor(
     private readonly scene: Scene,
     private readonly cover: AbstractMesh[],
+    private readonly ground: AbstractMesh[],
     spawns: Vector3[],
     resourcePoints: Vector3[],
     private readonly onBotDefeated: (bot: BotController) => void,
@@ -136,8 +137,10 @@ export class BotManager {
     playerPosition: Vector3,
     playerViewDirection: Vector3,
     playerTarget: Mesh,
-    onBotShot: (bot: BotController) => void,
-    onPlayerHit: (damageMultiplier: number) => void,
+    playerSpeed: number,
+    onBotShot: (bot: BotController, origin: Vector3, direction: Vector3) => void,
+    onPlayerHit: () => void,
+    onBotFootstep: (position: Vector3) => void,
   ) {
     if (!this.waveActive || !this.wave) return;
     this.removeExpiredCorpses(now);
@@ -148,12 +151,15 @@ export class BotManager {
         dt,
         playerPosition,
         playerTarget,
+        playerSpeed,
         cover: this.cover,
+        ground: this.ground,
         patrolPoints: this.patrolPoints,
         teammates: this.bots,
         lastGunshot: this.lastGunshot,
         onShot: onBotShot,
         onHitPlayer: onPlayerHit,
+        onFootstep: onBotFootstep,
       });
     }
   }
@@ -190,7 +196,10 @@ export class BotManager {
 
   getBotByMesh(mesh: AbstractMesh) {
     return this.bots.find(
-      (bot) => bot.isAlive && bot.mesh === mesh,
+      (bot) => (
+        bot.isAlive
+        && (bot.bodyHitbox === mesh || bot.headHitbox === mesh)
+      ),
     );
   }
 
@@ -257,6 +266,7 @@ export class BotManager {
         playerPosition,
         playerViewDirection,
       ))
+      .filter(({ position }) => this.isSpawnClear(position))
       .filter(({ index }) => !this.recentlyUsedSpawns.includes(index));
     const safePool = candidates.length > 0
       ? candidates
@@ -267,6 +277,7 @@ export class BotManager {
           playerPosition,
           playerViewDirection,
         ))
+        .filter(({ position }) => this.isSpawnClear(position))
         .filter(({ index }) => !this.recentlyUsedSpawns.includes(index));
     if (safePool.length === 0) return undefined;
     safePool.sort(
@@ -309,6 +320,35 @@ export class BotManager {
       (mesh) => this.cover.includes(mesh),
     );
     return obstruction?.hit === true;
+  }
+
+  private isSpawnClear(spawn: Vector3) {
+    const groundProbe = this.scene.pickWithRay(
+      new Ray(spawn.add(new Vector3(0, 2, 0)), Vector3.Down(), 5),
+      (mesh) => this.ground.includes(mesh),
+    );
+    if (!groundProbe?.hit || !groundProbe.pickedPoint) return false;
+    if (Math.abs(groundProbe.pickedPoint.y - (spawn.y - 1.3)) > 0.6) {
+      return false;
+    }
+
+    return !this.cover.some((mesh) => {
+      if (this.ground.includes(mesh) || !mesh.isEnabled()) return false;
+      const bounds = mesh.getBoundingInfo().boundingBox;
+      const minimum = bounds.minimumWorld;
+      const maximum = bounds.maximumWorld;
+      const overlapsHorizontally = (
+        spawn.x >= minimum.x - 0.55
+        && spawn.x <= maximum.x + 0.55
+        && spawn.z >= minimum.z - 0.55
+        && spawn.z <= maximum.z + 0.55
+      );
+      const overlapsVertically = (
+        spawn.y + 1.2 >= minimum.y
+        && spawn.y - 1.2 <= maximum.y
+      );
+      return overlapsHorizontally && overlapsVertically;
+    });
   }
 
   private spawnBot(spawn: Vector3) {

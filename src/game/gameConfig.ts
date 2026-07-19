@@ -16,38 +16,41 @@ export const GAME_CONFIG = {
   },
   camera: { sensitivity: 0.0012, minSensitivity: 0.0006, maxSensitivity: 0.003, verticalLimit: 1.5 },
   weapon: {
-    damage: 12.5,
-    magazineSize: 30,
+    bodyDamage: 20,
+    headshotDamage: 60,
+    magazineSize: 40,
     roundsPerMinute: 600,
-    reloadMs: 2200,
+    reloadMs: 1800,
     range: 80,
     recoilPerShot: 0.006,
     hipSpread: 0.012,
   },
-  regeneration: { delayMs: 2000, healthPerSecond: 20 },
+  regeneration: { delayMs: 800, healthPerSecond: 20 },
   bot: {
+    shotDamage: 10,
     detectionRange: 30,
     fieldOfViewRadians: 1.85,
+    firingAngleRadians: 0.18,
+    gravity: -24,
     perceptionSeconds: 0.2,
-    decisionSeconds: 0.65,
-    reactionSeconds: 0.32,
-    accuracy: 0.5,
     personalSpace: 2.2,
   },
 } as const;
 
 export interface WaveConfig {
   number: 1 | 2 | 3;
+  name: string;
   totalEnemies: number;
   durationSeconds: number;
   maximumAlive: number;
   movementMultiplier: number;
-  reactionMultiplier: number;
-  accuracyMultiplier: number;
+  reactionSeconds: number;
+  effectiveAccuracy: number;
+  roundsPerMinute: number;
+  searchSeconds: number;
+  searchRadius: number;
   perceptionMultiplier: number;
-  decisionMultiplier: number;
   aggressionMultiplier: number;
-  damageMultiplier: number;
   elevatedSpawnFrequency: number;
   replacementDelayMs: number;
 }
@@ -55,50 +58,56 @@ export interface WaveConfig {
 export const WAVE_CONFIGS: readonly WaveConfig[] = [
   {
     number: 1,
+    name: "Introduction",
     totalEnemies: 15,
     durationSeconds: 3 * 60,
-    maximumAlive: 5,
+    maximumAlive: 3,
     movementMultiplier: 1,
-    reactionMultiplier: 1,
-    accuracyMultiplier: 1,
+    reactionSeconds: 0.8,
+    effectiveAccuracy: 0.45,
+    roundsPerMinute: 180,
+    searchSeconds: 3,
+    searchRadius: 2,
     perceptionMultiplier: 1,
-    decisionMultiplier: 1,
     aggressionMultiplier: 1,
-    damageMultiplier: 1,
     elevatedSpawnFrequency: 5,
-    replacementDelayMs: 850,
+    replacementDelayMs: 1250,
   },
   {
     number: 2,
+    name: "Pressure",
     totalEnemies: 20,
     durationSeconds: 5 * 60,
-    maximumAlive: 6,
-    movementMultiplier: 1.12,
-    reactionMultiplier: 0.78,
-    accuracyMultiplier: 1.16,
+    maximumAlive: 5,
+    movementMultiplier: 1.08,
+    reactionSeconds: 0.6,
+    effectiveAccuracy: 0.65,
+    roundsPerMinute: 220,
+    searchSeconds: 5,
+    searchRadius: 4,
     perceptionMultiplier: 0.82,
-    decisionMultiplier: 0.78,
     aggressionMultiplier: 1.16,
-    damageMultiplier: 1,
     elevatedSpawnFrequency: 4,
-    replacementDelayMs: 720,
+    replacementDelayMs: 1150,
   },
   {
     number: 3,
+    name: "Final Assault",
     totalEnemies: 28,
     durationSeconds: 8 * 60,
     maximumAlive: 7,
-    movementMultiplier: 1.22,
-    reactionMultiplier: 0.62,
-    accuracyMultiplier: 1.32,
+    movementMultiplier: 1.14,
+    reactionSeconds: 0.5,
+    effectiveAccuracy: 0.75,
+    roundsPerMinute: 260,
+    searchSeconds: 7,
+    searchRadius: 6,
     perceptionMultiplier: 0.68,
-    decisionMultiplier: 0.62,
     aggressionMultiplier: 1.3,
-    damageMultiplier: 1.15,
     elevatedSpawnFrequency: 3,
-    replacementDelayMs: 620,
+    replacementDelayMs: 1050,
   },
 ] as const;
 
-export const WAVE_TRANSITION_SECONDS = 8;
+export const WAVE_TRANSITION_SECONDS = 5;
 export const OPENING_COUNTDOWN_SECONDS = 3;

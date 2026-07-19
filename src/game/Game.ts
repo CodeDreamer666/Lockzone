@@ -71,6 +71,8 @@ export class Game {
   private matchActive = false;
   private keys = new Set<string>();
   private mouseDown = false;
+  private aimDown = false;
+  private aimBlend = 0;
   private playerController?: PlayerController;
   private pushablePropController?: PushablePropController;
   private feedback = "Click Start to enter the arena";
@@ -198,6 +200,7 @@ export class Game {
       : new BotManager(
         this.scene,
         this.cover,
+        this.walkableSurfaces,
         map.botSpawns,
         map.resourcePoints,
         () => {
@@ -264,6 +267,8 @@ export class Game {
     this.matchActive = false;
     this.paused = false;
     this.mouseDown = false;
+    this.aimDown = false;
+    this.aimBlend = 0;
     this.keys.clear();
     document.exitPointerLock();
     this.ui.showLoading(10, "Surveying the security district");
@@ -390,12 +395,18 @@ export class Game {
     window.onblur = () => this.clearMovementInput();
     this.canvas.onmousedown = (event) => {
       if (event.button === 0 && document.pointerLockElement === this.canvas) this.mouseDown = true;
+      if (event.button === 2 && document.pointerLockElement === this.canvas && this.phase === "active") this.aimDown = true;
     };
-    this.canvas.onmouseup = (event) => { if (event.button === 0) this.mouseDown = false; };
+    this.canvas.onmouseup = (event) => {
+      if (event.button === 0) this.mouseDown = false;
+      if (event.button === 2) this.aimDown = false;
+    };
+    this.canvas.oncontextmenu = (event) => event.preventDefault();
     document.onmousemove = (event) => {
       if (document.pointerLockElement !== this.canvas || !this.matchActive) return;
-      this.camera.rotation.y += event.movementX * this.sensitivity;
-      this.camera.rotation.x = Math.max(-GAME_CONFIG.camera.verticalLimit, Math.min(GAME_CONFIG.camera.verticalLimit, this.camera.rotation.x + event.movementY * this.sensitivity));
+      const sensitivity = this.sensitivity * (1 - this.aimBlend * 0.52);
+      this.camera.rotation.y += event.movementX * sensitivity;
+      this.camera.rotation.x = Math.max(-GAME_CONFIG.camera.verticalLimit, Math.min(GAME_CONFIG.camera.verticalLimit, this.camera.rotation.x + event.movementY * sensitivity));
     };
     document.onpointerlockchange = () => {
       if (!document.pointerLockElement && this.matchActive && !this.paused) this.pauseMatch();
@@ -412,6 +423,7 @@ export class Game {
     const now = performance.now();
     this.runElapsedSeconds += deltaSeconds;
     this.movePlayer(deltaSeconds);
+    this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
 
     if (this.phase === "active") {
@@ -424,19 +436,18 @@ export class Game {
         this.camera.position,
         this.camera.getDirection(Vector3.Forward()),
         this.playerTarget,
+        this.playerController.getSnapshot().velocityAfterCollision.length(),
         (bot) => this.audio.play("enemyShot", bot.mesh.position),
-        (damageMultiplier) => {
+        () => {
           if (
             this.gameplayTestMode
             && this.gameplayTestScenario === "observe"
           ) {
             return;
           }
-          this.damagePlayer(
-            GAME_CONFIG.weapon.damage * damageMultiplier,
-            now,
-          );
+          this.damagePlayer(GAME_CONFIG.bot.shotDamage, now);
         },
+        (position) => this.audio.playBotFootstep(position),
       );
       if (!this.movementTestMode && this.botManager?.isWaveComplete) {
         this.completeWave();
@@ -464,7 +475,11 @@ export class Game {
       this.runGameplayTest(now);
     }
     this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
-    if (this.weaponRig) this.weaponRig.position.y = -0.38 - this.recoil * 2;
+    if (this.weaponRig) {
+      this.weaponRig.position.x = 0.42 * (1 - this.aimBlend);
+      this.weaponRig.position.y = -0.38 + 0.25 * this.aimBlend - this.recoil * 2;
+      this.weaponRig.position.z = 0.72 - 0.12 * this.aimBlend;
+    }
     this.updateHud();
     this.updateCollisionDebugReadout(now);
     this.updateActiveContactDebug();
@@ -474,7 +489,7 @@ export class Game {
     const wave = WAVE_CONFIGS[this.waveIndex];
     this.phase = "active";
     this.remaining = wave.durationSeconds;
-    this.feedback = `Wave ${wave.number} engaged`;
+    this.feedback = `${wave.name} engaged · ${wave.totalEnemies} enemies`;
     this.botManager?.startWave(wave, now);
   }
 
@@ -486,13 +501,12 @@ export class Game {
     this.botManager?.stopWave();
     this.clearCombatEffects();
     this.mouseDown = false;
+    this.cancelAim();
     this.clearMovementInput();
-    this.playerHealth = Math.min(
-      GAME_CONFIG.player.health,
-      this.playerHealth + 25,
-    );
+    this.playerHealth = GAME_CONFIG.player.health;
     this.weapon.refill();
     this.regenerationActive = false;
+    this.playerDamagedAt = -Infinity;
     if (this.waveIndex === WAVE_CONFIGS.length - 1) {
       this.finish("Victory");
       return;
@@ -501,7 +515,7 @@ export class Game {
     this.phase = "transition";
     this.phaseRemaining = WAVE_TRANSITION_SECONDS;
     this.remaining = WAVE_CONFIGS[this.waveIndex].durationSeconds;
-    this.feedback = "Health restored by 25 · Weapon reloaded";
+    this.feedback = "Wave Complete · Health and magazine restored";
   }
 
   private updateHud() {
@@ -528,12 +542,12 @@ export class Game {
       announcement: this.phase === "opening"
         ? {
             title: "WAVE 1",
-            detail: `Begins in ${Math.max(1, Math.ceil(this.phaseRemaining))}`,
+            detail: `${wave.name} · ${wave.totalEnemies} enemies · Begins in ${Math.max(1, Math.ceil(this.phaseRemaining))}`,
           }
         : this.phase === "transition"
           ? {
-              title: "WAVE CLEARED",
-              detail: `Wave ${wave.number} begins in ${Math.max(
+              title: "WAVE COMPLETE",
+              detail: `${wave.name} · ${wave.totalEnemies} enemies · Begins in ${Math.max(
                 1,
                 Math.ceil(this.phaseRemaining),
               )}`,
@@ -638,6 +652,24 @@ export class Game {
   private clearMovementInput() {
     this.keys.clear();
     this.jumpQueued = false;
+  }
+
+  private updateAim(deltaSeconds: number) {
+    const target = this.aimDown && this.phase === "active" ? 1 : 0;
+    this.aimBlend += (target - this.aimBlend) * Math.min(1, deltaSeconds * 8);
+    const normalFov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
+    const aimedFov = 42 * Math.PI / 180;
+    this.camera.fov = normalFov + (aimedFov - normalFov) * this.aimBlend;
+    this.ui.setAiming(this.aimBlend > 0.08);
+  }
+
+  private cancelAim() {
+    this.aimDown = false;
+    this.aimBlend = 0;
+    this.ui.setAiming(false);
+    if (this.camera) {
+      this.camera.fov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
+    }
   }
 
   private runAutomatedMovementChecks() {
@@ -1288,6 +1320,7 @@ export class Game {
     if (!this.matchActive || this.paused) return;
     this.paused = true;
     this.mouseDown = false;
+    this.cancelAim();
     this.clearMovementInput();
     this.audio.setPaused(true);
     document.exitPointerLock();
@@ -1350,15 +1383,21 @@ export class Game {
     const bot = hit?.pickedMesh ? this.botManager?.getBotByMesh(hit.pickedMesh) : undefined;
     if (bot) {
       this.shotsHit += 1;
+      const headshot = hit?.pickedMesh?.metadata?.hitZone === "head";
+      const damage = headshot
+        ? GAME_CONFIG.weapon.headshotDamage
+        : GAME_CONFIG.weapon.bodyDamage;
       const defeated = this.botManager?.damageBot(
         bot,
-        GAME_CONFIG.weapon.damage,
+        damage,
         now,
       ) ?? false;
       this.audio.play("hit", bot.mesh.position);
       this.feedback = defeated
-        ? `Enemy eliminated — ${this.botManager?.remaining ?? 0} remaining`
-        : "Hit confirmed";
+        ? `${headshot ? "HEADSHOT — " : ""}Enemy eliminated — ${this.botManager?.remaining ?? 0} remaining`
+        : headshot
+          ? "HEADSHOT"
+          : "Hit confirmed";
       this.impact(hit!.pickedPoint!, true, "concrete");
     } else if (hit?.pickedPoint) {
       const bulletMaterial = bulletMaterialOf(hit.pickedMesh ?? undefined);
@@ -1408,7 +1447,13 @@ export class Game {
   }
 
   private updatePlayerRegeneration(now: number, dt: number) {
-    if (this.playerHealth >= GAME_CONFIG.player.health || now - this.playerDamagedAt < GAME_CONFIG.regeneration.delayMs) {
+    if (
+      !this.matchActive
+      || this.phase !== "active"
+      || this.playerHealth <= 0
+      || this.playerHealth >= GAME_CONFIG.player.health
+      || now - this.playerDamagedAt < GAME_CONFIG.regeneration.delayMs
+    ) {
       this.regenerationActive = false;
       return;
     }
@@ -1444,8 +1489,10 @@ export class Game {
     this.phase = "ended";
     this.paused = false;
     this.mouseDown = false;
+    this.cancelAim();
     this.clearMovementInput();
     this.botManager?.stopWave();
+    this.weapon.refill();
     this.clearCombatEffects();
     document.exitPointerLock();
     this.audio.play("result");
