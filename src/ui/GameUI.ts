@@ -1,14 +1,60 @@
-export type GraphicsPreset = "low" | "balanced" | "cinematic";
-
 interface MenuActions {
   onStart: () => void;
-  onGraphics: (preset: GraphicsPreset) => void;
 }
 
-interface PauseActions extends MenuActions {
+interface PauseActions {
   onResume: () => void;
   onRestart: () => void;
   onMainMenu: () => void;
+}
+
+export interface HudValues {
+  wave: number;
+  totalWaves: number;
+  health: number;
+  magazine: number;
+  enemiesAlive: number;
+  enemiesRemaining: number;
+  remaining: number;
+  message?: string;
+  announcement?: {
+    title: string;
+    detail: string;
+  };
+}
+
+export interface GameResults {
+  result: "Victory" | "Defeat";
+  wavesCompleted: number;
+  totalWaves: number;
+  enemiesDefeated: number;
+  completionSeconds: number;
+  shotsFired: number;
+  shotsHit: number;
+  damageTaken: number;
+}
+
+interface ResultActions {
+  onRestart: () => void;
+  onMainMenu: () => void;
+}
+
+interface GameplayTestReport {
+  scenario: string;
+  phase: string;
+  wave: number;
+  timer: number;
+  alive: number;
+  defeated: number;
+  waitingToSpawn: number;
+  remaining: number;
+  health: number;
+  magazine: number;
+  totalEnemiesDefeated: number;
+  wavesCompleted: number;
+  maximumAliveByWave: number[];
+  elevatedSpawnsByWave: number[];
+  botActivity: string[];
 }
 
 export class GameUI {
@@ -33,22 +79,14 @@ export class GameUI {
         <p class="lede">Late afternoon. Light rain. One dense sixty-metre yard built around containers, a warehouse, rooftop routes, and an accessible guard tower.</p>
         <div class="menu-actions">
           <button id="start-match" class="primary-action">Start Mission</button>
-          <button id="show-settings" class="quiet-action">Settings</button>
           <button id="show-controls" class="quiet-action">Controls</button>
         </div>
-        <section id="settings-panel" class="menu-panel" hidden>
-          <p class="panel-label">Graphics</p>
-          <div class="preset-row">
-            <button data-preset="low" class="preset-button">Low</button>
-            <button data-preset="balanced" class="preset-button is-active">Balanced</button>
-            <button data-preset="cinematic" class="preset-button">Cinematic</button>
-          </div>
-        </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
           <span><b>WASD</b> Move</span>
           <span><b>Space</b> Jump</span>
           <span><b>Mouse</b> Look</span>
           <span><b>Left click</b> Fire</span>
+          <span><b>Right click</b> Aim</span>
           <span><b>R</b> Reload</span>
           <span><b>Esc</b> Pause</span>
         </section>
@@ -66,60 +104,181 @@ export class GameUI {
         <div class="pause-actions">
           <button id="resume-match" class="primary-action">Resume</button>
           <button id="restart-match" class="quiet-action">Restart</button>
-          <button id="pause-settings" class="quiet-action">Settings</button>
           <button id="pause-controls" class="quiet-action">Controls</button>
           <button id="main-menu" class="text-action">Return to main menu</button>
         </div>
-        <section id="settings-panel" class="menu-panel" hidden>
-          <p class="panel-label">Graphics</p>
-          <div class="preset-row">
-            <button data-preset="low" class="preset-button">Low</button>
-            <button data-preset="balanced" class="preset-button is-active">Balanced</button>
-            <button data-preset="cinematic" class="preset-button">Cinematic</button>
-          </div>
-        </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
+          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
         </section>
       </main>`;
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
     document.querySelector("#restart-match")?.addEventListener("click", actions.onRestart);
     document.querySelector("#main-menu")?.addEventListener("click", actions.onMainMenu);
-    this.bindPanelToggles("#pause-settings", "#pause-controls");
-    this.bindGraphicsButtons(actions.onGraphics);
+    this.bindControlsToggle("#pause-controls");
   }
 
   showHud() {
     this.root.innerHTML = `
-      <div class="hud top"><div id="timer">05:00</div></div>
+      <div class="hud top">
+        <div id="wave">WAVE 1 / 3</div>
+        <div id="timer">03:00</div>
+      </div>
       <div class="crosshair" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <div class="scope-overlay" aria-hidden="true">
+        <div class="scope-lens">
+          <span class="scope-line scope-line--horizontal"></span>
+          <span class="scope-line scope-line--vertical"></span>
+          <span class="scope-dot"></span>
+        </div>
+      </div>
       <div id="feedback"></div>
+      <div id="wave-announcement" class="wave-announcement" hidden>
+        <strong id="announcement-title"></strong>
+        <span id="announcement-detail"></span>
+      </div>
       <div class="hud bottom">
         <div class="hud-readout hud-health"><span>HEALTH</span><b id="health">100</b></div>
-        <div class="hud-readout hud-bots"><span>HOSTILES</span><b id="bots-remaining">10</b></div>
+        <div class="hud-enemies">
+          <div class="hud-readout hud-bots">
+            <span>ALIVE</span>
+            <b id="enemies-alive">0</b>
+          </div>
+          <div class="hud-readout hud-bots">
+            <span>WAVE REMAINING</span>
+            <b id="enemies-remaining">15</b>
+          </div>
+        </div>
         <div class="hud-readout hud-ammo"><span>AMMUNITION</span><b id="ammo">30 / ∞</b></div>
       </div>`;
   }
 
-  update(values: { health: number; magazine: number; botsRemaining: number; remaining: number; message?: string }) {
-    this.setText("health", String(Math.round(values.health)));
-    this.setText("ammo", `${values.magazine} / ∞`);
-    this.setText("bots-remaining", String(values.botsRemaining));
-    const minutes = Math.floor(values.remaining / 60).toString().padStart(2, "0");
-    const seconds = Math.ceil(values.remaining % 60).toString().padStart(2, "0");
-    this.setText("timer", `${minutes}:${seconds}`);
-    if (values.message !== undefined) this.setText("feedback", values.message);
+  setAiming(aiming: boolean) {
+    this.root.classList.toggle("is-aiming", aiming);
   }
 
-  showResult(result: "Victory" | "Defeat" | "Draw", onRestart: () => void) {
-    this.root.innerHTML += `
+  update(values: HudValues) {
+    this.setText("wave", `WAVE ${values.wave} / ${values.totalWaves}`);
+    this.setText("health", String(Math.round(values.health)));
+    this.setText("ammo", String(values.magazine));
+    this.setText("enemies-alive", String(values.enemiesAlive));
+    this.setText("enemies-remaining", String(values.enemiesRemaining));
+    const totalSeconds = Math.ceil(values.remaining);
+    const minutes = Math.floor(totalSeconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const seconds = (totalSeconds % 60)
+      .toString()
+      .padStart(2, "0");
+    this.setText("timer", `${minutes}:${seconds}`);
+    if (values.message !== undefined) this.setText("feedback", values.message);
+    const announcement = document.querySelector<HTMLElement>(
+      "#wave-announcement",
+    );
+    if (announcement) {
+      announcement.hidden = !values.announcement;
+    }
+    if (values.announcement) {
+      this.setText("announcement-title", values.announcement.title);
+      this.setText("announcement-detail", values.announcement.detail);
+    }
+  }
+
+  showResult(results: GameResults, actions: ResultActions) {
+    const accuracy = results.shotsFired > 0
+      ? `${Math.round(results.shotsHit / results.shotsFired * 100)}%`
+      : "—";
+    this.root.innerHTML = `
       <main class="result">
-        <p class="eyebrow">MISSION COMPLETE</p>
-        <h2>${result}</h2>
-        <p>${result === "Draw" ? "Time expired before the district was secured." : result === "Victory" ? "The district is secure." : "The security district has been lost."}</p>
-        <button id="rematch" class="primary-action">Run it again</button>
+        <p class="eyebrow">${
+          results.result === "Victory"
+            ? "MISSION COMPLETE"
+            : "MISSION FAILED"
+        }</p>
+        <h2>${results.result}</h2>
+        <p>${
+          results.result === "Victory"
+            ? "All three waves eliminated. The district is secure."
+            : "The security district has been lost."
+        }</p>
+        <dl class="result-stats">
+          <div><dt>Waves completed</dt><dd>${results.wavesCompleted} / ${results.totalWaves}</dd></div>
+          <div><dt>Enemies defeated</dt><dd>${results.enemiesDefeated}</dd></div>
+          <div><dt>Completion time</dt><dd>${this.formatDuration(results.completionSeconds)}</dd></div>
+          <div><dt>Accuracy</dt><dd>${accuracy}</dd></div>
+          <div><dt>Damage taken</dt><dd>${Math.round(results.damageTaken)}</dd></div>
+        </dl>
+        <div class="result-actions">
+          <button id="rematch" class="primary-action">Play Again</button>
+          <button id="result-main-menu" class="quiet-action">Return to Menu</button>
+        </div>
       </main>`;
-    document.querySelector("#rematch")?.addEventListener("click", onRestart);
+    document.querySelector("#rematch")?.addEventListener(
+      "click",
+      actions.onRestart,
+    );
+    document.querySelector("#result-main-menu")?.addEventListener(
+      "click",
+      actions.onMainMenu,
+    );
+  }
+
+  showGameplayTestReport(values: GameplayTestReport) {
+    let report = document.querySelector<HTMLElement>(
+      "#gameplay-test-report",
+    );
+    if (!report) {
+      this.root.insertAdjacentHTML(
+        "beforeend",
+        `
+          <aside id="gameplay-test-report" class="gameplay-test-report">
+            <b>GAMEPLAY TEST</b>
+            <span id="test-scenario"></span>
+            <span id="test-phase"></span>
+            <span id="test-wave"></span>
+            <span id="test-counts"></span>
+            <span id="test-player"></span>
+            <span id="test-run"></span>
+            <span id="test-caps"></span>
+            <span id="test-elevation"></span>
+            <span id="test-bot-activity"></span>
+          </aside>
+        `,
+      );
+      report = document.querySelector<HTMLElement>(
+        "#gameplay-test-report",
+      );
+    }
+    if (!report) return;
+    this.setText("test-scenario", `Scenario: ${values.scenario}`);
+    this.setText("test-phase", `Phase: ${values.phase}`);
+    this.setText(
+      "test-wave",
+      `Wave: ${values.wave} · Timer: ${values.timer.toFixed(1)}`,
+    );
+    this.setText(
+      "test-counts",
+      `Alive: ${values.alive} · Defeated: ${values.defeated} · Waiting: ${values.waitingToSpawn} · Remaining: ${values.remaining}`,
+    );
+    this.setText(
+      "test-player",
+      `Health: ${Math.round(values.health)} · Magazine: ${values.magazine}`,
+    );
+    this.setText(
+      "test-run",
+      `Run defeats: ${values.totalEnemiesDefeated} · Waves complete: ${values.wavesCompleted}`,
+    );
+    this.setText(
+      "test-caps",
+      `Maximum alive: ${values.maximumAliveByWave.join(" / ")}`,
+    );
+    this.setText(
+      "test-elevation",
+      `Elevated spawns: ${values.elevatedSpawnsByWave.join(" / ")}`,
+    );
+    this.setText(
+      "test-bot-activity",
+      values.botActivity.join(" | ") || "Bots: none",
+    );
   }
 
   showCollisionDebug(values: {
@@ -218,38 +377,30 @@ export class GameUI {
 
   private bindStartActions(actions: MenuActions) {
     document.querySelector("#start-match")?.addEventListener("click", actions.onStart);
-    this.bindPanelToggles("#show-settings", "#show-controls");
-    this.bindGraphicsButtons(actions.onGraphics);
+    this.bindControlsToggle("#show-controls");
   }
 
-  private bindPanelToggles(settingsSelector: string, controlsSelector: string) {
-    const settings = document.querySelector<HTMLElement>("#settings-panel");
+  private bindControlsToggle(controlsSelector: string) {
     const controls = document.querySelector<HTMLElement>("#controls-panel");
-    document.querySelector(settingsSelector)?.addEventListener("click", () => {
-      if (!settings || !controls) return;
-      settings.hidden = !settings.hidden;
-      controls.hidden = true;
-    });
     document.querySelector(controlsSelector)?.addEventListener("click", () => {
-      if (!settings || !controls) return;
+      if (!controls) return;
       controls.hidden = !controls.hidden;
-      settings.hidden = true;
-    });
-  }
-
-  private bindGraphicsButtons(onGraphics: (preset: GraphicsPreset) => void) {
-    document.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const preset = button.dataset.preset as GraphicsPreset;
-        onGraphics(preset);
-        document.querySelectorAll("[data-preset]").forEach((option) => option.classList.remove("is-active"));
-        button.classList.add("is-active");
-      });
     });
   }
 
   private setText(id: string, value: string) {
     const node = document.getElementById(id);
     if (node) node.textContent = value;
+  }
+
+  private formatDuration(totalSeconds: number) {
+    const wholeSeconds = Math.floor(totalSeconds);
+    const minutes = Math.floor(wholeSeconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const seconds = (wholeSeconds % 60)
+      .toString()
+      .padStart(2, "0");
+    return `${minutes}:${seconds}`;
   }
 }

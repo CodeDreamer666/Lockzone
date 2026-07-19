@@ -18,7 +18,6 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import { AudioManager } from "../audio/AudioManager";
-import { BotController } from "../bot/BotController";
 import { BotManager } from "../bot/BotManager";
 import { Weapon } from "../combat/Weapon";
 import {
@@ -28,14 +27,21 @@ import {
   type SurfaceType,
 } from "../map/createMap";
 import { createMovementTestMap } from "../map/createMovementTestMap";
-import { GameUI, type GraphicsPreset } from "../ui/GameUI";
-import { GAME_CONFIG } from "./gameConfig";
+import { GameUI } from "../ui/GameUI";
+import {
+  GAME_CONFIG,
+  OPENING_COUNTDOWN_SECONDS,
+  WAVE_CONFIGS,
+  WAVE_TRANSITION_SECONDS,
+} from "./gameConfig";
 import {
   PlayerController,
   type MovementSnapshot,
 } from "./PlayerController";
 import { clampDeltaSeconds } from "./movementMath";
 import { PushablePropController } from "./PushablePropController";
+
+type MatchPhase = "opening" | "active" | "transition" | "ended";
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -52,33 +58,51 @@ export class Game {
   private playerHealth: number = GAME_CONFIG.player.health;
   private playerDamagedAt = -Infinity;
   private regenerationActive = false;
-  private remaining: number = GAME_CONFIG.matchDurationSeconds;
+  private remaining: number = WAVE_CONFIGS[0].durationSeconds;
+  private phase: MatchPhase = "opening";
+  private phaseRemaining = OPENING_COUNTDOWN_SECONDS;
+  private waveIndex = 0;
+  private wavesCompleted = 0;
+  private totalEnemiesDefeated = 0;
+  private runElapsedSeconds = 0;
+  private shotsFired = 0;
+  private shotsHit = 0;
+  private damageTaken = 0;
   private matchActive = false;
   private keys = new Set<string>();
   private mouseDown = false;
+  private aimDown = false;
+  private aimBlend = 0;
   private playerController?: PlayerController;
   private pushablePropController?: PushablePropController;
   private feedback = "Click Start to enter the arena";
   private sensitivity: number = GAME_CONFIG.camera.sensitivity;
   private weaponRig?: TransformNode;
   private muzzleFlash?: Mesh;
-  private shadowGenerator?: ShadowGenerator;
-  private glowLayer?: GlowLayer;
   private recoil = 0;
   private footstepDistance = 0;
   private currentSurface: SurfaceType = "asphalt";
   private jumpQueued = false;
   private paused = false;
   private presentationTime = 0;
-  private graphicsPreset: GraphicsPreset = "balanced";
   private readonly collisionDebugAvailable = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   private collisionDebugEnabled = this.collisionDebugAvailable && new URLSearchParams(window.location.search).has("collisionDebug");
   private collisionDebugMeshes: Mesh[] = [];
   private activeContactDebugEnabled = this.collisionDebugAvailable && new URLSearchParams(window.location.search).has("contactDebug");
   private activeContactDebugMeshes: AbstractMesh[] = [];
   private activeContactDebugUpdatedAt = -Infinity;
+  private readonly combatEffects = new Set<Mesh>();
   private readonly movementTestMode = this.collisionDebugAvailable
     && new URLSearchParams(window.location.search).has("movementTest");
+  private readonly gameplayTestMode = this.collisionDebugAvailable
+    && new URLSearchParams(window.location.search).has("gameplayTest");
+  private readonly gameplayTestScenario = new URLSearchParams(
+    window.location.search,
+  ).get("gameplayTest") ?? "victory";
+  private gameplayTestNextActionAt = 0;
+  private gameplayTestActionComplete = false;
+  private gameplayTestMaximumAlive = [0, 0, 0];
+  private gameplayTestElevatedSpawns = [0, 0, 0];
 
   start() {
     this.engine.runRenderLoop(() => this.scene?.render());
@@ -102,7 +126,10 @@ export class Game {
       await this.botManager?.loadModels();
       this.matchActive = true;
       this.paused = false;
-      this.feedback = "Click the game view to enable mouse look";
+      this.phase = this.movementTestMode ? "active" : "opening";
+      this.feedback = this.movementTestMode
+        ? "Movement test area — F7 shows controller diagnostics"
+        : "Prepare for Wave 1";
       this.ui.showHud();
       this.updateCollisionDebugReadout(performance.now());
       this.resetActiveContactDebug();
@@ -128,15 +155,30 @@ export class Game {
     this.playerHealth = GAME_CONFIG.player.health;
     this.playerDamagedAt = -Infinity;
     this.regenerationActive = false;
-    this.remaining = GAME_CONFIG.matchDurationSeconds;
+    this.remaining = WAVE_CONFIGS[0].durationSeconds;
+    this.phase = "opening";
+    this.phaseRemaining = OPENING_COUNTDOWN_SECONDS;
+    this.waveIndex = 0;
+    this.wavesCompleted = 0;
+    this.totalEnemiesDefeated = 0;
+    this.runElapsedSeconds = 0;
+    this.shotsFired = 0;
+    this.shotsHit = 0;
+    this.damageTaken = 0;
+    this.gameplayTestNextActionAt = 0;
+    this.gameplayTestActionComplete = false;
+    this.gameplayTestMaximumAlive = [0, 0, 0];
+    this.gameplayTestElevatedSpawns = [0, 0, 0];
     this.playerController = undefined;
     this.pushablePropController = undefined;
     this.jumpQueued = false;
     this.footstepDistance = 0;
     this.currentSurface = "asphalt";
     this.keys.clear();
-    this.feedback = "Eliminate all ten opponents";
+    this.feedback = "Prepare for Wave 1";
     this.mouseDown = false;
+    this.recoil = 0;
+    this.clearCombatEffects();
   }
 
   private createScene() {
@@ -155,9 +197,12 @@ export class Game {
       : new BotManager(
         this.scene,
         this.cover,
+        this.walkableSurfaces,
         map.botSpawns,
         map.resourcePoints,
-        map.playerSpawn,
+        () => {
+          this.totalEnemiesDefeated += 1;
+        },
       );
     this.createFirstPersonWeapon();
     this.scene.onBeforeRenderObservable.add(() => this.update());
@@ -184,7 +229,6 @@ export class Game {
     const shadows = new ShadowGenerator(2048, sun);
     shadows.usePercentageCloserFiltering = true;
     shadows.bias = 0.0005;
-    this.shadowGenerator = shadows;
 
     const map = useMovementTestMap
       ? createMovementTestMap(this.scene)
@@ -194,9 +238,8 @@ export class Game {
     this.cover = map.cover;
     this.walkableSurfaces = map.walkableSurfaces;
     if (this.collisionDebugEnabled) this.createCollisionDebugVisuals();
-    this.glowLayer = new GlowLayer("subtle bloom", this.scene, { blurKernelSize: 32 });
-    this.glowLayer.intensity = 0.16;
-    this.applyGraphicsPreset(this.graphicsPreset);
+    const glowLayer = new GlowLayer("subtle bloom", this.scene, { blurKernelSize: 32 });
+    glowLayer.intensity = 0.16;
     return map;
   }
 
@@ -219,6 +262,8 @@ export class Game {
     this.matchActive = false;
     this.paused = false;
     this.mouseDown = false;
+    this.aimDown = false;
+    this.aimBlend = 0;
     this.keys.clear();
     document.exitPointerLock();
     this.ui.showLoading(10, "Surveying the security district");
@@ -226,13 +271,13 @@ export class Game {
     this.weapon.dispose();
     this.botManager?.dispose();
     this.botManager = undefined;
+    this.clearCombatEffects();
     this.scene?.dispose();
     this.createPresentationScene();
     this.ui.showLoading(86, "Environment ready");
     await this.waitForPaint();
     this.ui.showStart({
       onStart: () => void this.startMatch(),
-      onGraphics: (preset) => this.applyGraphicsPreset(preset),
     });
   }
 
@@ -261,20 +306,6 @@ export class Game {
 
   private waitForPaint() {
     return new Promise<void>((resolve) => window.setTimeout(resolve, 32));
-  }
-
-  private applyGraphicsPreset(preset: GraphicsPreset) {
-    this.graphicsPreset = preset;
-    if (!this.scene) return;
-    if (preset === "low") {
-      this.scene.fogDensity = 0.0018;
-      if (this.glowLayer) this.glowLayer.intensity = 0.05;
-      if (this.shadowGenerator) this.shadowGenerator.usePercentageCloserFiltering = false;
-      return;
-    }
-    this.scene.fogDensity = preset === "cinematic" ? 0.0034 : 0.0024;
-    if (this.glowLayer) this.glowLayer.intensity = preset === "cinematic" ? 0.22 : 0.16;
-    if (this.shadowGenerator) this.shadowGenerator.usePercentageCloserFiltering = true;
   }
 
   private createPlayerTarget() {
@@ -344,12 +375,18 @@ export class Game {
     window.onblur = () => this.clearMovementInput();
     this.canvas.onmousedown = (event) => {
       if (event.button === 0 && document.pointerLockElement === this.canvas) this.mouseDown = true;
+      if (event.button === 2 && document.pointerLockElement === this.canvas && this.phase === "active") this.aimDown = true;
     };
-    this.canvas.onmouseup = (event) => { if (event.button === 0) this.mouseDown = false; };
+    this.canvas.onmouseup = (event) => {
+      if (event.button === 0) this.mouseDown = false;
+      if (event.button === 2) this.aimDown = false;
+    };
+    this.canvas.oncontextmenu = (event) => event.preventDefault();
     document.onmousemove = (event) => {
       if (document.pointerLockElement !== this.canvas || !this.matchActive) return;
-      this.camera.rotation.y += event.movementX * this.sensitivity;
-      this.camera.rotation.x = Math.max(-GAME_CONFIG.camera.verticalLimit, Math.min(GAME_CONFIG.camera.verticalLimit, this.camera.rotation.x + event.movementY * this.sensitivity));
+      const sensitivity = this.sensitivity * (1 - this.aimBlend * 0.52);
+      this.camera.rotation.y += event.movementX * sensitivity;
+      this.camera.rotation.x = Math.max(-GAME_CONFIG.camera.verticalLimit, Math.min(GAME_CONFIG.camera.verticalLimit, this.camera.rotation.x + event.movementY * sensitivity));
     };
     document.onpointerlockchange = () => {
       if (!document.pointerLockElement && this.matchActive && !this.paused) this.pauseMatch();
@@ -364,37 +401,192 @@ export class Game {
     const deltaSeconds = clampDeltaSeconds(this.engine.getDeltaTime());
     if (deltaSeconds === 0) return;
     const now = performance.now();
-    this.remaining = Math.max(0, this.remaining - deltaSeconds);
+    this.runElapsedSeconds += deltaSeconds;
     this.movePlayer(deltaSeconds);
-    this.updatePlayerRegeneration(now, deltaSeconds);
+    this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
-    if (this.mouseDown) this.shoot(now);
-    this.botManager?.update(
-      now,
-      deltaSeconds,
-      this.camera.position,
-      this.playerTarget,
-      (bot) => this.audio.play("enemyShot", bot.mesh.position),
-      () => this.damagePlayer(GAME_CONFIG.weapon.damage, now),
-    );
-    this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
-    if (this.weaponRig) this.weaponRig.position.y = -0.38 - this.recoil * 2;
 
-    if (!this.movementTestMode && this.botManager?.remaining === 0) this.finish("Victory");
-    if (!this.movementTestMode && this.remaining === 0 && (this.botManager?.remaining ?? 0) > 0) this.finish("Defeat");
+    if (this.phase === "active") {
+      this.remaining = Math.max(0, this.remaining - deltaSeconds);
+      this.updatePlayerRegeneration(now, deltaSeconds);
+      if (this.mouseDown) this.shoot(now);
+      this.botManager?.update(
+        now,
+        deltaSeconds,
+        this.camera.position,
+        this.camera.getDirection(Vector3.Forward()),
+        this.playerTarget,
+        this.playerController.getSnapshot().velocityAfterCollision.length(),
+        (bot) => this.audio.play("enemyShot", bot.mesh.position),
+        () => {
+          if (
+            this.gameplayTestMode
+            && this.gameplayTestScenario === "observe"
+          ) {
+            return;
+          }
+          this.damagePlayer(GAME_CONFIG.bot.shotDamage, now);
+        },
+        (position) => this.audio.playBotFootstep(position),
+      );
+      if (!this.movementTestMode && this.botManager?.isWaveComplete) {
+        this.completeWave();
+      } else if (
+        !this.movementTestMode
+        && this.remaining === 0
+        && (this.botManager?.remaining ?? 0) > 0
+      ) {
+        this.finish("Defeat");
+      }
+    } else if (
+      this.phase === "opening"
+      || this.phase === "transition"
+    ) {
+      this.phaseRemaining = Math.max(
+        0,
+        this.phaseRemaining - deltaSeconds,
+      );
+      if (this.phaseRemaining === 0) {
+        this.startCurrentWave(now);
+      }
+    }
+
+    if (this.gameplayTestMode) {
+      this.runGameplayTest(now);
+    }
+    this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
+    if (this.weaponRig) {
+      this.weaponRig.position.x = 0.42 * (1 - this.aimBlend);
+      this.weaponRig.position.y = -0.38 + 0.25 * this.aimBlend - this.recoil * 2;
+      this.weaponRig.position.z = 0.72 - 0.12 * this.aimBlend;
+    }
+    this.updateHud();
+    this.updateCollisionDebugReadout(now);
+    this.updateActiveContactDebug();
+  }
+
+  private startCurrentWave(now: number) {
+    const wave = WAVE_CONFIGS[this.waveIndex];
+    this.phase = "active";
+    this.remaining = wave.durationSeconds;
+    this.feedback = `${wave.name} engaged · ${wave.totalEnemies} enemies`;
+    this.botManager?.startWave(wave, now);
+  }
+
+  private completeWave() {
+    if (this.phase !== "active") return;
+    this.gameplayTestElevatedSpawns[this.waveIndex] =
+      this.botManager?.elevatedSpawned ?? 0;
+    this.wavesCompleted += 1;
+    this.botManager?.stopWave();
+    this.clearCombatEffects();
+    this.mouseDown = false;
+    this.cancelAim();
+    this.clearMovementInput();
+    this.playerHealth = GAME_CONFIG.player.health;
+    this.weapon.refill();
+    this.regenerationActive = false;
+    this.playerDamagedAt = -Infinity;
+    if (this.waveIndex === WAVE_CONFIGS.length - 1) {
+      this.finish("Victory");
+      return;
+    }
+    this.waveIndex += 1;
+    this.phase = "transition";
+    this.phaseRemaining = WAVE_TRANSITION_SECONDS;
+    this.remaining = WAVE_CONFIGS[this.waveIndex].durationSeconds;
+    this.feedback = "Wave Complete · Health and magazine restored";
+  }
+
+  private updateHud() {
+    const wave = WAVE_CONFIGS[this.waveIndex];
+    const transitioning = (
+      this.phase === "opening"
+      || this.phase === "transition"
+    );
     this.ui.update({
+      wave: wave.number,
+      totalWaves: WAVE_CONFIGS.length,
       health: this.playerHealth,
       magazine: this.weapon.magazine,
-      botsRemaining: this.botManager?.remaining ?? 0,
+      enemiesAlive: transitioning ? 0 : (this.botManager?.alive ?? 0),
+      enemiesRemaining: transitioning
+        ? wave.totalEnemies
+        : (this.botManager?.remaining ?? 0),
       remaining: this.remaining,
       message: this.movementTestMode
         ? "Movement test area — F7 shows controller diagnostics"
         : this.weapon.isReloading
           ? "Reloading…"
           : this.feedback,
+      announcement: this.phase === "opening"
+        ? {
+            title: "WAVE 1",
+            detail: `${wave.name} · ${wave.totalEnemies} enemies · Begins in ${Math.max(1, Math.ceil(this.phaseRemaining))}`,
+          }
+        : this.phase === "transition"
+          ? {
+              title: "WAVE COMPLETE",
+              detail: `${wave.name} · ${wave.totalEnemies} enemies · Begins in ${Math.max(
+                1,
+                Math.ceil(this.phaseRemaining),
+              )}`,
+            }
+          : undefined,
     });
-    this.updateCollisionDebugReadout(now);
-    this.updateActiveContactDebug();
+  }
+
+  private runGameplayTest(now: number) {
+    const currentAlive = this.botManager?.alive ?? 0;
+    this.gameplayTestMaximumAlive[this.waveIndex] = Math.max(
+      this.gameplayTestMaximumAlive[this.waveIndex],
+      currentAlive,
+    );
+    if (
+      this.phase === "active"
+      && !this.gameplayTestActionComplete
+      && now >= this.gameplayTestNextActionAt
+    ) {
+      if (this.gameplayTestScenario === "healthDefeat") {
+        this.gameplayTestActionComplete = true;
+        this.damagePlayer(this.playerHealth, now);
+      } else if (this.gameplayTestScenario === "timerDefeat") {
+        this.gameplayTestActionComplete = true;
+        this.remaining = 0;
+      } else if (
+        this.gameplayTestScenario === "victory"
+        &&
+        currentAlive > 0
+        && (
+          (this.botManager?.defeated ?? 0) > 0
+          || currentAlive === WAVE_CONFIGS[this.waveIndex].maximumAlive
+        )
+      ) {
+        this.botManager?.eliminateActiveBots(now);
+        this.gameplayTestNextActionAt = now + 120;
+      }
+    }
+    this.showGameplayTestReport();
+  }
+
+  private showGameplayTestReport() {
+    this.ui.showGameplayTestReport({
+      scenario: this.gameplayTestScenario,
+      phase: this.phase,
+      wave: WAVE_CONFIGS[this.waveIndex].number,
+      timer: this.remaining,
+      alive: this.botManager?.alive ?? 0,
+      defeated: this.botManager?.defeated ?? 0,
+      waitingToSpawn: this.botManager?.waitingToSpawn ?? 0,
+      remaining: this.botManager?.remaining ?? 0,
+      health: this.playerHealth,
+      magazine: this.weapon.magazine,
+      totalEnemiesDefeated: this.totalEnemiesDefeated,
+      wavesCompleted: this.wavesCompleted,
+      maximumAliveByWave: this.gameplayTestMaximumAlive,
+      elevatedSpawnsByWave: this.gameplayTestElevatedSpawns,
+      botActivity: this.botManager?.debugBots ?? [],
+    });
   }
 
   private movePlayer(deltaSeconds: number) {
@@ -440,6 +632,24 @@ export class Game {
   private clearMovementInput() {
     this.keys.clear();
     this.jumpQueued = false;
+  }
+
+  private updateAim(deltaSeconds: number) {
+    const target = this.aimDown && this.phase === "active" ? 1 : 0;
+    this.aimBlend += (target - this.aimBlend) * Math.min(1, deltaSeconds * 8);
+    const normalFov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
+    const aimedFov = 42 * Math.PI / 180;
+    this.camera.fov = normalFov + (aimedFov - normalFov) * this.aimBlend;
+    this.ui.setAiming(this.aimBlend > 0.08);
+  }
+
+  private cancelAim() {
+    this.aimDown = false;
+    this.aimBlend = 0;
+    this.ui.setAiming(false);
+    if (this.camera) {
+      this.camera.fov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
+    }
   }
 
   private runAutomatedMovementChecks() {
@@ -1090,6 +1300,7 @@ export class Game {
     if (!this.matchActive || this.paused) return;
     this.paused = true;
     this.mouseDown = false;
+    this.cancelAim();
     this.clearMovementInput();
     this.audio.setPaused(true);
     document.exitPointerLock();
@@ -1097,8 +1308,6 @@ export class Game {
       onResume: () => this.resumeMatch(),
       onRestart: () => void this.startMatch(),
       onMainMenu: () => void this.showMainMenu(),
-      onStart: () => void this.startMatch(),
-      onGraphics: (preset) => this.applyGraphicsPreset(preset),
     });
   }
 
@@ -1125,6 +1334,7 @@ export class Game {
   }
 
   private shoot(now: number) {
+    if (this.phase !== "active") return;
     if (this.weapon.magazine === 0) {
       this.audio.play("empty");
       this.reload();
@@ -1132,6 +1342,7 @@ export class Game {
     }
     if (!this.weapon.canFire(now)) return;
     this.weapon.fire(now);
+    this.shotsFired += 1;
     this.botManager?.reportPlayerGunshot(this.camera.position, now);
     this.audio.playGunshot(this.currentSurface === "indoor");
     this.recoil = Math.min(0.12, this.recoil + GAME_CONFIG.weapon.recoilPerShot);
@@ -1149,9 +1360,22 @@ export class Game {
     ));
     const bot = hit?.pickedMesh ? this.botManager?.getBotByMesh(hit.pickedMesh) : undefined;
     if (bot) {
-      bot.takeDamage(GAME_CONFIG.weapon.damage, now);
+      this.shotsHit += 1;
+      const headshot = hit?.pickedMesh?.metadata?.hitZone === "head";
+      const damage = headshot
+        ? GAME_CONFIG.weapon.headshotDamage
+        : GAME_CONFIG.weapon.bodyDamage;
+      const defeated = this.botManager?.damageBot(
+        bot,
+        damage,
+        now,
+      ) ?? false;
       this.audio.play("hit", bot.mesh.position);
-      this.feedback = bot.isAlive ? "Hit confirmed" : `Bot eliminated — ${this.botManager?.remaining ?? 0} remaining`;
+      this.feedback = defeated
+        ? `${headshot ? "HEADSHOT — " : ""}Enemy eliminated — ${this.botManager?.remaining ?? 0} remaining`
+        : headshot
+          ? "HEADSHOT"
+          : "Hit confirmed";
       this.impact(hit!.pickedPoint!, true, "concrete");
     } else if (hit?.pickedPoint) {
       const bulletMaterial = bulletMaterialOf(hit.pickedMesh ?? undefined);
@@ -1179,8 +1403,12 @@ export class Game {
           ? new Color3(0.62, 0.28, 0.08)
           : new Color3(0.78, 0.7, 0.54);
     mark.material = material;
+    this.combatEffects.add(mark);
     if (!combatant) this.audio.playImpact(bulletMaterial, position);
-    window.setTimeout(() => mark.dispose(), 220);
+    window.setTimeout(() => {
+      this.combatEffects.delete(mark);
+      mark.dispose();
+    }, 220);
   }
 
   private reload() {
@@ -1197,7 +1425,14 @@ export class Game {
   }
 
   private updatePlayerRegeneration(now: number, dt: number) {
-    if (this.playerHealth >= GAME_CONFIG.player.health || now - this.playerDamagedAt < GAME_CONFIG.regeneration.delayMs) {
+    if (
+      !this.matchActive
+      || this.phase !== "active"
+      || this.playerHealth <= 0
+      || this.playerHealth >= GAME_CONFIG.player.health
+      || now - this.playerDamagedAt
+        < WAVE_CONFIGS[this.waveIndex].playerRegenerationDelayMs
+    ) {
       this.regenerationActive = false;
       return;
     }
@@ -1210,8 +1445,10 @@ export class Game {
   }
 
   private damagePlayer(amount: number, now: number) {
-    if (!this.matchActive) return;
+    if (!this.matchActive || this.phase !== "active") return;
+    const healthBeforeDamage = this.playerHealth;
     this.playerHealth = Math.max(0, this.playerHealth - amount);
+    this.damageTaken += healthBeforeDamage - this.playerHealth;
     this.playerDamagedAt = now;
     this.regenerationActive = false;
     this.feedback = "You were hit";
@@ -1219,14 +1456,44 @@ export class Game {
     if (this.playerHealth <= 0) this.finish("Defeat");
   }
 
+  private clearCombatEffects() {
+    this.combatEffects.forEach((effect) => effect.dispose());
+    this.combatEffects.clear();
+    this.muzzleFlash?.setEnabled(false);
+  }
+
   private finish(result: "Victory" | "Defeat") {
     if (!this.matchActive) return;
     this.matchActive = false;
+    this.phase = "ended";
     this.paused = false;
     this.mouseDown = false;
+    this.cancelAim();
+    this.clearMovementInput();
+    this.botManager?.stopWave();
+    this.weapon.refill();
+    this.clearCombatEffects();
     document.exitPointerLock();
     this.audio.play("result");
-    this.ui.showResult(result, () => void this.startMatch());
+    this.ui.showResult(
+      {
+        result,
+        wavesCompleted: this.wavesCompleted,
+        totalWaves: WAVE_CONFIGS.length,
+        enemiesDefeated: this.totalEnemiesDefeated,
+        completionSeconds: this.runElapsedSeconds,
+        shotsFired: this.shotsFired,
+        shotsHit: this.shotsHit,
+        damageTaken: this.damageTaken,
+      },
+      {
+        onRestart: () => void this.startMatch(),
+        onMainMenu: () => void this.showMainMenu(),
+      },
+    );
+    if (this.gameplayTestMode) {
+      this.showGameplayTestReport();
+    }
   }
 }
 
