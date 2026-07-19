@@ -32,16 +32,13 @@ button:hover { background: #f1d887; transform: translateY(-2px); }
 
 .primary-action { min-width: 178px; }
 
-.quiet-action,
-.preset-button {
+.quiet-action {
   background: rgba(12, 16, 16, 0.64);
   color: #e4dfd2;
   border-color: rgba(226, 214, 177, 0.45);
 }
 
-.quiet-action:hover,
-.preset-button:hover,
-.preset-button.is-active { background: rgba(215, 185, 104, 0.18); color: #f8e7ad; }
+.quiet-action:hover { background: rgba(215, 185, 104, 0.18); color: #f8e7ad; }
 
 .text-action { border-color: transparent; background: transparent; color: #b5b3ab; padding-inline: 0; }
 
@@ -82,10 +79,6 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 
 .menu-panel { border-top: 1px solid rgba(230, 220, 185, 0.24); color: #d4d0c1; margin-top: 1.2rem; padding-top: 1rem; }
 .menu-panel[hidden] { display: none; }
-.panel-label { color: #aaa99f; font-size: 0.68rem; letter-spacing: 0.18em; margin: 0 0 0.65rem; text-transform: uppercase; }
-.preset-row { display: flex; gap: 0.45rem; }
-.preset-button { padding: 0.55rem 0.7rem; font-size: 0.63rem; }
-
 .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; }
 .controls span { background: rgba(185, 179, 150, 0.08); border-left: 2px solid rgba(215, 185, 104, 0.48); color: #c8c5bb; font-size: 0.72rem; padding: 0.58rem 0.65rem; }
 .controls b { color: #f4e4ac; display: block; font-size: 0.67rem; letter-spacing: 0.06em; margin-bottom: 0.12rem; }

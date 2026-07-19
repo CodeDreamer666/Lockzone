@@ -27,7 +27,7 @@ import {
   type SurfaceType,
 } from "../map/createMap";
 import { createMovementTestMap } from "../map/createMovementTestMap";
-import { GameUI, type GraphicsPreset } from "../ui/GameUI";
+import { GameUI } from "../ui/GameUI";
 import {
   GAME_CONFIG,
   OPENING_COUNTDOWN_SECONDS,
@@ -79,15 +79,12 @@ export class Game {
   private sensitivity: number = GAME_CONFIG.camera.sensitivity;
   private weaponRig?: TransformNode;
   private muzzleFlash?: Mesh;
-  private shadowGenerator?: ShadowGenerator;
-  private glowLayer?: GlowLayer;
   private recoil = 0;
   private footstepDistance = 0;
   private currentSurface: SurfaceType = "asphalt";
   private jumpQueued = false;
   private paused = false;
   private presentationTime = 0;
-  private graphicsPreset: GraphicsPreset = "balanced";
   private readonly collisionDebugAvailable = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   private collisionDebugEnabled = this.collisionDebugAvailable && new URLSearchParams(window.location.search).has("collisionDebug");
   private collisionDebugMeshes: Mesh[] = [];
@@ -232,7 +229,6 @@ export class Game {
     const shadows = new ShadowGenerator(2048, sun);
     shadows.usePercentageCloserFiltering = true;
     shadows.bias = 0.0005;
-    this.shadowGenerator = shadows;
 
     const map = useMovementTestMap
       ? createMovementTestMap(this.scene)
@@ -242,9 +238,8 @@ export class Game {
     this.cover = map.cover;
     this.walkableSurfaces = map.walkableSurfaces;
     if (this.collisionDebugEnabled) this.createCollisionDebugVisuals();
-    this.glowLayer = new GlowLayer("subtle bloom", this.scene, { blurKernelSize: 32 });
-    this.glowLayer.intensity = 0.16;
-    this.applyGraphicsPreset(this.graphicsPreset);
+    const glowLayer = new GlowLayer("subtle bloom", this.scene, { blurKernelSize: 32 });
+    glowLayer.intensity = 0.16;
     return map;
   }
 
@@ -283,7 +278,6 @@ export class Game {
     await this.waitForPaint();
     this.ui.showStart({
       onStart: () => void this.startMatch(),
-      onGraphics: (preset) => this.applyGraphicsPreset(preset),
     });
   }
 
@@ -312,20 +306,6 @@ export class Game {
 
   private waitForPaint() {
     return new Promise<void>((resolve) => window.setTimeout(resolve, 32));
-  }
-
-  private applyGraphicsPreset(preset: GraphicsPreset) {
-    this.graphicsPreset = preset;
-    if (!this.scene) return;
-    if (preset === "low") {
-      this.scene.fogDensity = 0.0018;
-      if (this.glowLayer) this.glowLayer.intensity = 0.05;
-      if (this.shadowGenerator) this.shadowGenerator.usePercentageCloserFiltering = false;
-      return;
-    }
-    this.scene.fogDensity = preset === "cinematic" ? 0.0034 : 0.0024;
-    if (this.glowLayer) this.glowLayer.intensity = preset === "cinematic" ? 0.22 : 0.16;
-    if (this.shadowGenerator) this.shadowGenerator.usePercentageCloserFiltering = true;
   }
 
   private createPlayerTarget() {
@@ -1328,8 +1308,6 @@ export class Game {
       onResume: () => this.resumeMatch(),
       onRestart: () => void this.startMatch(),
       onMainMenu: () => void this.showMainMenu(),
-      onStart: () => void this.startMatch(),
-      onGraphics: (preset) => this.applyGraphicsPreset(preset),
     });
   }
 
@@ -1452,7 +1430,8 @@ export class Game {
       || this.phase !== "active"
       || this.playerHealth <= 0
       || this.playerHealth >= GAME_CONFIG.player.health
-      || now - this.playerDamagedAt < GAME_CONFIG.regeneration.delayMs
+      || now - this.playerDamagedAt
+        < WAVE_CONFIGS[this.waveIndex].playerRegenerationDelayMs
     ) {
       this.regenerationActive = false;
       return;

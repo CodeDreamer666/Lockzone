@@ -105,7 +105,6 @@ export class BotController {
     this.headHitbox.isPickable = true;
     this.headHitbox.metadata = { enemy: true, botId: id, hitZone: "head" };
     this.visual = new BotVisual(scene, id, model, this.mesh);
-    this.visual.setHealth(this.health);
     this.role = id % 3 === 0 ? "flank" : id % 3 === 1 ? "pressure" : "hold";
     this.reactionDelay = difficulty.reactionSeconds;
     this.accuracy = difficulty.effectiveAccuracy;
@@ -129,13 +128,11 @@ export class BotController {
     if (!this.isAlive) return false;
     this.health = Math.max(0, this.health - amount);
     this.lastDamagedAt = now;
-    this.visual.setHealth(this.health);
     if (this.health > 0) return false;
     this.isAlive = false;
     this.state = "dead";
     this.weapon.dispose();
     this.visual.hideMuzzleFlash();
-    this.visual.hideHealthBar();
     this.mesh.rotation.z = Math.PI / 2;
     return true;
   }
@@ -400,7 +397,6 @@ export class BotController {
   private regenerate(now: number, dt: number) {
     if (now - this.lastDamagedAt < GAME_CONFIG.regeneration.delayMs || this.health >= GAME_CONFIG.player.health) return;
     this.health = Math.min(GAME_CONFIG.player.health, this.health + GAME_CONFIG.regeneration.healthPerSecond * dt);
-    this.visual.setHealth(this.health);
   }
 
   private syncVisual(now: number) {

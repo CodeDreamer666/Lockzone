@@ -42,9 +42,9 @@ assert(headshotHealth === 0, `Expected two headshots to kill, got ${headshotHeal
 assert(GAME_CONFIG.regeneration.delayMs === 800, "Regeneration delay must be 800 ms");
 
 const expectedWaves = [
-  { total: 15, maximumAlive: 3, accuracy: 0.45, reaction: 0.8, movement: 1 },
-  { total: 20, maximumAlive: 5, accuracy: 0.65, reaction: 0.6, movement: 1.08 },
-  { total: 28, maximumAlive: 7, accuracy: 0.75, reaction: 0.5, movement: 1.14 },
+  { total: 20, maximumAlive: 5, accuracy: 0.5, reaction: 0.6, movement: 1, regenerationDelayMs: 800 },
+  { total: 28, maximumAlive: 7, accuracy: 0.7, reaction: 0.5, movement: 1.1, regenerationDelayMs: 1200 },
+  { total: 40, maximumAlive: 10, accuracy: 0.8, reaction: 0.3, movement: 1.2, regenerationDelayMs: 1500 },
 ];
 WAVE_CONFIGS.forEach((wave, index) => {
   const expected = expectedWaves[index];
@@ -53,6 +53,10 @@ WAVE_CONFIGS.forEach((wave, index) => {
   assert(wave.effectiveAccuracy === expected.accuracy, `Wave ${wave.number} accuracy is incorrect`);
   assert(wave.reactionSeconds === expected.reaction, `Wave ${wave.number} reaction delay is incorrect`);
   assert(wave.movementMultiplier === expected.movement, `Wave ${wave.number} movement multiplier is incorrect`);
+  assert(
+    wave.playerRegenerationDelayMs === expected.regenerationDelayMs,
+    `Wave ${wave.number} regeneration delay is incorrect`,
+  );
   assert(
     wave.replacementDelayMs >= 1000 && wave.replacementDelayMs <= 1500,
     `Wave ${wave.number} replacement delay is outside 1–1.5 seconds`,

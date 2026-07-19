@@ -1,11 +1,8 @@
-export type GraphicsPreset = "low" | "balanced" | "cinematic";
-
 interface MenuActions {
   onStart: () => void;
-  onGraphics: (preset: GraphicsPreset) => void;
 }
 
-interface PauseActions extends MenuActions {
+interface PauseActions {
   onResume: () => void;
   onRestart: () => void;
   onMainMenu: () => void;
@@ -82,17 +79,8 @@ export class GameUI {
         <p class="lede">Late afternoon. Light rain. One dense sixty-metre yard built around containers, a warehouse, rooftop routes, and an accessible guard tower.</p>
         <div class="menu-actions">
           <button id="start-match" class="primary-action">Start Mission</button>
-          <button id="show-settings" class="quiet-action">Settings</button>
           <button id="show-controls" class="quiet-action">Controls</button>
         </div>
-        <section id="settings-panel" class="menu-panel" hidden>
-          <p class="panel-label">Graphics</p>
-          <div class="preset-row">
-            <button data-preset="low" class="preset-button">Low</button>
-            <button data-preset="balanced" class="preset-button is-active">Balanced</button>
-            <button data-preset="cinematic" class="preset-button">Cinematic</button>
-          </div>
-        </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
           <span><b>WASD</b> Move</span>
           <span><b>Space</b> Jump</span>
@@ -116,18 +104,9 @@ export class GameUI {
         <div class="pause-actions">
           <button id="resume-match" class="primary-action">Resume</button>
           <button id="restart-match" class="quiet-action">Restart</button>
-          <button id="pause-settings" class="quiet-action">Settings</button>
           <button id="pause-controls" class="quiet-action">Controls</button>
           <button id="main-menu" class="text-action">Return to main menu</button>
         </div>
-        <section id="settings-panel" class="menu-panel" hidden>
-          <p class="panel-label">Graphics</p>
-          <div class="preset-row">
-            <button data-preset="low" class="preset-button">Low</button>
-            <button data-preset="balanced" class="preset-button is-active">Balanced</button>
-            <button data-preset="cinematic" class="preset-button">Cinematic</button>
-          </div>
-        </section>
         <section id="controls-panel" class="menu-panel controls" hidden>
           <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
         </section>
@@ -135,8 +114,7 @@ export class GameUI {
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
     document.querySelector("#restart-match")?.addEventListener("click", actions.onRestart);
     document.querySelector("#main-menu")?.addEventListener("click", actions.onMainMenu);
-    this.bindPanelToggles("#pause-settings", "#pause-controls");
-    this.bindGraphicsButtons(actions.onGraphics);
+    this.bindControlsToggle("#pause-controls");
   }
 
   showHud() {
@@ -399,33 +377,14 @@ export class GameUI {
 
   private bindStartActions(actions: MenuActions) {
     document.querySelector("#start-match")?.addEventListener("click", actions.onStart);
-    this.bindPanelToggles("#show-settings", "#show-controls");
-    this.bindGraphicsButtons(actions.onGraphics);
+    this.bindControlsToggle("#show-controls");
   }
 
-  private bindPanelToggles(settingsSelector: string, controlsSelector: string) {
-    const settings = document.querySelector<HTMLElement>("#settings-panel");
+  private bindControlsToggle(controlsSelector: string) {
     const controls = document.querySelector<HTMLElement>("#controls-panel");
-    document.querySelector(settingsSelector)?.addEventListener("click", () => {
-      if (!settings || !controls) return;
-      settings.hidden = !settings.hidden;
-      controls.hidden = true;
-    });
     document.querySelector(controlsSelector)?.addEventListener("click", () => {
-      if (!settings || !controls) return;
+      if (!controls) return;
       controls.hidden = !controls.hidden;
-      settings.hidden = true;
-    });
-  }
-
-  private bindGraphicsButtons(onGraphics: (preset: GraphicsPreset) => void) {
-    document.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const preset = button.dataset.preset as GraphicsPreset;
-        onGraphics(preset);
-        document.querySelectorAll("[data-preset]").forEach((option) => option.classList.remove("is-active"));
-        button.classList.add("is-active");
-      });
     });
   }
 

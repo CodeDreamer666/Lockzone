@@ -46,6 +46,7 @@ export interface WaveConfig {
   movementMultiplier: number;
   reactionSeconds: number;
   effectiveAccuracy: number;
+  playerRegenerationDelayMs: number;
   roundsPerMinute: number;
   searchSeconds: number;
   searchRadius: number;
@@ -59,12 +60,13 @@ export const WAVE_CONFIGS: readonly WaveConfig[] = [
   {
     number: 1,
     name: "Introduction",
-    totalEnemies: 15,
+    totalEnemies: 20,
     durationSeconds: 3 * 60,
-    maximumAlive: 3,
+    maximumAlive: 5,
     movementMultiplier: 1,
-    reactionSeconds: 0.8,
-    effectiveAccuracy: 0.45,
+    reactionSeconds: 0.6,
+    effectiveAccuracy: 0.5,
+    playerRegenerationDelayMs: 800,
     roundsPerMinute: 180,
     searchSeconds: 3,
     searchRadius: 2,
@@ -76,12 +78,13 @@ export const WAVE_CONFIGS: readonly WaveConfig[] = [
   {
     number: 2,
     name: "Pressure",
-    totalEnemies: 20,
+    totalEnemies: 28,
     durationSeconds: 5 * 60,
-    maximumAlive: 5,
-    movementMultiplier: 1.08,
-    reactionSeconds: 0.6,
-    effectiveAccuracy: 0.65,
+    maximumAlive: 7,
+    movementMultiplier: 1.1,
+    reactionSeconds: 0.5,
+    effectiveAccuracy: 0.7,
+    playerRegenerationDelayMs: 1200,
     roundsPerMinute: 220,
     searchSeconds: 5,
     searchRadius: 4,
@@ -93,12 +96,13 @@ export const WAVE_CONFIGS: readonly WaveConfig[] = [
   {
     number: 3,
     name: "Final Assault",
-    totalEnemies: 28,
+    totalEnemies: 40,
     durationSeconds: 8 * 60,
-    maximumAlive: 7,
-    movementMultiplier: 1.14,
-    reactionSeconds: 0.5,
-    effectiveAccuracy: 0.75,
+    maximumAlive: 10,
+    movementMultiplier: 1.2,
+    reactionSeconds: 0.3,
+    effectiveAccuracy: 0.8,
+    playerRegenerationDelayMs: 1500,
     roundsPerMinute: 260,
     searchSeconds: 7,
     searchRadius: 6,
