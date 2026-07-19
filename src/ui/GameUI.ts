@@ -57,6 +57,7 @@ interface GameplayTestReport {
   wavesCompleted: number;
   maximumAliveByWave: number[];
   elevatedSpawnsByWave: number[];
+  botActivity: string[];
 }
 
 export class GameUI {
@@ -249,6 +250,7 @@ export class GameUI {
             <span id="test-run"></span>
             <span id="test-caps"></span>
             <span id="test-elevation"></span>
+            <span id="test-bot-activity"></span>
           </aside>
         `,
       );
@@ -282,6 +284,10 @@ export class GameUI {
     this.setText(
       "test-elevation",
       `Elevated spawns: ${values.elevatedSpawnsByWave.join(" / ")}`,
+    );
+    this.setText(
+      "test-bot-activity",
+      values.botActivity.join(" | ") || "Bots: none",
     );
   }
 

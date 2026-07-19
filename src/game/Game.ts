@@ -425,10 +425,18 @@ export class Game {
         this.camera.getDirection(Vector3.Forward()),
         this.playerTarget,
         (bot) => this.audio.play("enemyShot", bot.mesh.position),
-        (damageMultiplier) => this.damagePlayer(
-          GAME_CONFIG.weapon.damage * damageMultiplier,
-          now,
-        ),
+        (damageMultiplier) => {
+          if (
+            this.gameplayTestMode
+            && this.gameplayTestScenario === "observe"
+          ) {
+            return;
+          }
+          this.damagePlayer(
+            GAME_CONFIG.weapon.damage * damageMultiplier,
+            now,
+          );
+        },
       );
       if (!this.movementTestMode && this.botManager?.isWaveComplete) {
         this.completeWave();
@@ -552,6 +560,8 @@ export class Game {
         this.gameplayTestActionComplete = true;
         this.remaining = 0;
       } else if (
+        this.gameplayTestScenario === "victory"
+        &&
         currentAlive > 0
         && (
           (this.botManager?.defeated ?? 0) > 0
@@ -581,6 +591,7 @@ export class Game {
       wavesCompleted: this.wavesCompleted,
       maximumAliveByWave: this.gameplayTestMaximumAlive,
       elevatedSpawnsByWave: this.gameplayTestElevatedSpawns,
+      botActivity: this.botManager?.debugBots ?? [],
     });
   }
 

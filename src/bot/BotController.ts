@@ -12,6 +12,7 @@ import {
   GAME_CONFIG,
   type WaveConfig,
 } from "../game/gameConfig";
+import { BotVisual } from "./BotVisual";
 
 export type BotState =
   | "searching"
@@ -37,6 +38,7 @@ export interface BotUpdateContext {
 export class BotController {
   readonly mesh: Mesh;
   readonly weapon = new Weapon();
+  private readonly visual: BotVisual;
   readonly role: BotRole;
   readonly reactionDelay: number;
   readonly accuracy: number;
@@ -45,7 +47,6 @@ export class BotController {
   health: number = GAME_CONFIG.player.health;
   state: BotState = "searching";
   isAlive = true;
-  private visual?: TransformNode;
   private lastDamagedAt = -Infinity;
   private lastSeen?: Vector3;
   private lastHeard?: Vector3;
@@ -57,13 +58,17 @@ export class BotController {
   private canSeePlayer = false;
   private facingYaw = 0;
   private navigationTarget?: Vector3;
+  private avoidanceTarget?: Vector3;
   private blockedMoves = 0;
+  private movedThisFrame = false;
+  private sightStatus = "not checked";
 
   constructor(
     scene: Scene,
     spawn: Vector3,
     readonly id: number,
     private readonly difficulty: WaveConfig,
+    model: TransformNode,
   ) {
     this.mesh = MeshBuilder.CreateCapsule(
       `bot ${id} collision`,
@@ -72,7 +77,12 @@ export class BotController {
     );
     this.mesh.position.copyFrom(spawn);
     this.mesh.visibility = 0.001;
+    this.mesh.isPickable = true;
+    this.mesh.checkCollisions = true;
+    this.mesh.ellipsoid = new Vector3(0.38, 1.2, 0.38);
+    this.mesh.ellipsoidOffset = Vector3.Zero();
     this.mesh.metadata = { enemy: true, botId: id };
+    this.visual = new BotVisual(scene, id, model, this.mesh);
     this.role = id % 3 === 0 ? "flank" : id % 3 === 1 ? "pressure" : "hold";
     this.reactionDelay = (
       GAME_CONFIG.bot.reactionSeconds
@@ -88,25 +98,23 @@ export class BotController {
       + (id % 4) * 2.5
     ) / difficulty.aggressionMultiplier;
     this.burstSeconds = 0.26 + (id % 3) * 0.13;
-    this.nextPerceptionAt = id * 28;
-    this.nextDecisionAt = id * 67;
+    this.nextPerceptionAt = (id % 10) * 28;
+    this.nextDecisionAt = (id % 10) * 67;
   }
 
   get isReady() {
-    return (
-      this.isAlive
-      && !!this.visual
-      && this.visual.isEnabled()
-      && !this.visual.isDisposed()
-    );
+    return this.isAlive && !this.mesh.isDisposed();
   }
 
-  setVisual(visual: TransformNode) {
-    this.visual = visual;
-    visual.parent = null;
-    visual.scaling.scaleInPlace(1.25);
-    visual.setEnabled(true);
-    this.syncVisual();
+  get debugSummary() {
+    const position = this.mesh.position;
+    return [
+      `#${this.id}`,
+      this.state,
+      this.canSeePlayer ? "sees player" : this.sightStatus,
+      this.movedThisFrame ? "moving" : "still",
+      `(${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`,
+    ].join(" · ");
   }
 
   takeDamage(amount: number, now: number) {
@@ -117,7 +125,8 @@ export class BotController {
     this.isAlive = false;
     this.state = "dead";
     this.weapon.dispose();
-    if (this.visual) this.visual.rotation.z = Math.PI / 2;
+    this.visual.hideMuzzleFlash();
+    this.mesh.rotation.z = Math.PI / 2;
     return true;
   }
 
@@ -127,13 +136,13 @@ export class BotController {
     if (context.now >= this.nextPerceptionAt) this.updatePerception(context);
     if (context.now >= this.nextDecisionAt) this.chooseState(context);
     this.move(context);
-    this.syncVisual();
     this.tryShoot(context);
+    this.syncVisual(context.now);
   }
 
   dispose() {
     this.weapon.dispose();
-    this.visual?.dispose();
+    this.visual.dispose();
     this.mesh.dispose();
   }
 
@@ -142,18 +151,24 @@ export class BotController {
       + GAME_CONFIG.bot.perceptionSeconds
         * this.difficulty.perceptionMultiplier
         * 1000
-      + this.id * 5;
+      + (this.id % 7) * 5;
     const visible = this.hasLineOfSight(
       context.playerPosition,
       context.playerTarget,
       context.cover,
-      context.teammates,
     );
     if (visible && !this.canSeePlayer) {
       this.reactionReadyAt = context.now + this.reactionDelay * 1000;
     }
     this.canSeePlayer = visible;
-    if (visible) this.lastSeen = context.playerPosition.clone();
+    if (visible) {
+      this.lastSeen = context.playerPosition.clone();
+      const toPlayer = context.playerPosition.subtract(this.mesh.position);
+      toPlayer.y = 0;
+      if (toPlayer.lengthSquared() > 0.0001) {
+        this.facingYaw = Math.atan2(toPlayer.x, toPlayer.z);
+      }
+    }
     if (
       !visible
       && context.lastGunshot
@@ -172,7 +187,7 @@ export class BotController {
       + GAME_CONFIG.bot.decisionSeconds
         * this.difficulty.decisionMultiplier
         * 1000
-      + this.id * 11;
+      + (this.id % 7) * 11;
     if (this.health <= 35) {
       this.state = "retreating";
       return;
@@ -187,9 +202,34 @@ export class BotController {
   private move(context: BotUpdateContext) {
     const target = this.getTarget(context);
     const direction = target.subtract(this.mesh.position);
+    this.movedThisFrame = false;
+    const playerDistance = Vector3.Distance(
+      this.mesh.position,
+      context.playerPosition,
+    );
+    const minimumCombatDistance = Math.max(
+      6,
+      this.preferredDistance * 0.75,
+    );
+    if (playerDistance < minimumCombatDistance) {
+      direction.copyFrom(this.mesh.position.subtract(context.playerPosition));
+      direction.y = 0;
+      if (direction.lengthSquared() < 0.0001) {
+        direction.set(1, 0, 0);
+      }
+    }
     const verticalDifference = direction.y;
     direction.y = 0;
     if (direction.length() < 0.8) {
+      if (
+        this.avoidanceTarget
+        && Vector3.DistanceSquared(
+          this.mesh.position,
+          this.avoidanceTarget,
+        ) < 1
+      ) {
+        this.avoidanceTarget = undefined;
+      }
       this.navigationTarget = undefined;
       return;
     }
@@ -206,28 +246,52 @@ export class BotController {
         * Math.min(Math.abs(verticalDifference), moveSpeed * context.dt * 0.5);
     }
     const previous = this.mesh.position.clone();
-    this.mesh.position.copyFrom(next);
-    if (
-      context.cover.some(
-        (wall) => wall.isEnabled() && this.mesh.intersectsMesh(wall, false),
-      )
-    ) {
-      this.mesh.position.copyFrom(previous);
+    const requestedMovement = next.subtract(previous);
+    this.mesh.moveWithCollisions(requestedMovement);
+    const actualMovementSquared = Vector3.DistanceSquared(
+      previous,
+      this.mesh.position,
+    );
+    const substantiallyBlocked = (
+      actualMovementSquared
+      < requestedMovement.lengthSquared() * 0.04
+    );
+    if (substantiallyBlocked) {
       this.blockedMoves += 1;
       if (this.blockedMoves >= 3) {
-        this.navigationTarget = this.choosePatrolPoint(
-          context.patrolPoints,
-          context.now + this.blockedMoves * 997,
+        const side = (this.id + this.blockedMoves) % 2 === 0 ? 1 : -1;
+        this.avoidanceTarget = this.mesh.position.add(
+          new Vector3(-direction.z * side, 0, direction.x * side).scale(8),
         );
         this.blockedMoves = 0;
       }
     } else {
       this.blockedMoves = 0;
+      this.movedThisFrame = actualMovementSquared > 0.000001;
     }
-    this.facingYaw = Math.atan2(direction.x, direction.z);
+    const lookDirection = (
+      playerDistance <= GAME_CONFIG.bot.detectionRange
+        ? context.playerPosition.subtract(this.mesh.position)
+        : direction
+    );
+    lookDirection.y = 0;
+    if (lookDirection.lengthSquared() > 0.0001) {
+      this.facingYaw = Math.atan2(lookDirection.x, lookDirection.z);
+    }
   }
 
   private getTarget(context: BotUpdateContext) {
+    if (this.avoidanceTarget) {
+      if (
+        Vector3.DistanceSquared(
+          this.mesh.position,
+          this.avoidanceTarget,
+        ) > 1
+      ) {
+        return this.avoidanceTarget;
+      }
+      this.avoidanceTarget = undefined;
+    }
     if (this.state === "retreating") {
       return this.mesh.position
         .subtract(context.playerPosition)
@@ -262,7 +326,10 @@ export class BotController {
         context.now,
       );
     }
-    return this.lastSeen ?? this.lastHeard ?? this.navigationTarget;
+    if (this.lastSeen || this.lastHeard || this.role !== "hold") {
+      return this.lastSeen ?? this.lastHeard ?? context.playerPosition;
+    }
+    return this.navigationTarget;
   }
 
   private choosePatrolPoint(points: Vector3[], now: number) {
@@ -302,7 +369,6 @@ export class BotController {
         context.playerPosition,
         context.playerTarget,
         context.cover,
-        context.teammates,
       )
     ) {
       this.canSeePlayer = false;
@@ -328,6 +394,7 @@ export class BotController {
     if (!this.weapon.canFire(context.now)) return;
     this.weapon.fire(context.now);
     context.onShot(this);
+    this.visual.showMuzzleFlash(context.now);
     const movementPenalty = this.state === "pressuring" ? 0.82 : 1;
     const hitChance = this.accuracy
       * movementPenalty
@@ -341,23 +408,25 @@ export class BotController {
     player: Vector3,
     playerTarget: Mesh,
     cover: AbstractMesh[],
-    teammates: BotController[],
   ) {
     const eye = this.mesh.position.add(new Vector3(0, 1.35, 0));
-    const direction = player.subtract(eye);
+    const targetPosition = playerTarget.getAbsolutePosition();
+    const direction = targetPosition.subtract(eye);
     const distance = direction.length();
     const detectionRange = GAME_CONFIG.bot.detectionRange
       * Math.max(1, this.difficulty.aggressionMultiplier * 0.9);
-    if (distance > detectionRange) return false;
+    if (distance > detectionRange) {
+      this.sightStatus = `out of range ${distance.toFixed(1)}`;
+      return false;
+    }
     const forward = new Vector3(
       Math.sin(this.facingYaw),
       0,
       Math.cos(this.facingYaw),
     );
-    if (
-      Vector3.Dot(forward, direction.normalize())
-      < Math.cos(GAME_CONFIG.bot.fieldOfViewRadians / 2)
-    ) {
+    const viewAlignment = Vector3.Dot(forward, direction.normalize());
+    if (viewAlignment < Math.cos(GAME_CONFIG.bot.fieldOfViewRadians / 2)) {
+      this.sightStatus = `outside view ${viewAlignment.toFixed(2)}`;
       return false;
     }
     const ray = new Ray(eye, direction, distance);
@@ -366,12 +435,13 @@ export class BotController {
       (mesh) => (
         mesh === playerTarget
         || cover.some((wall) => wall === mesh)
-        || teammates.some(
-          (bot) => bot !== this && bot.isAlive && bot.mesh === mesh,
-        )
       ),
     );
-    return hit?.pickedMesh === playerTarget;
+    const seesPlayer = hit?.pickedMesh === playerTarget;
+    this.sightStatus = seesPlayer
+      ? "sees player"
+      : `blocked by ${hit?.pickedMesh?.name ?? "nothing"}`;
+    return seesPlayer;
   }
 
   private regenerate(now: number, dt: number) {
@@ -387,10 +457,8 @@ export class BotController {
     );
   }
 
-  private syncVisual() {
-    if (!this.visual) return;
-    this.visual.position.copyFrom(this.mesh.position);
-    this.visual.position.y -= 1.3;
-    this.visual.rotation.y = this.facingYaw + Math.PI;
+  private syncVisual(now: number) {
+    this.mesh.rotation.y = this.facingYaw;
+    this.visual.update(now);
   }
 }

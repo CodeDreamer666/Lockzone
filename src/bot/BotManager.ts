@@ -86,6 +86,12 @@ export class BotManager {
     );
   }
 
+  get debugBots() {
+    return this.bots
+      .filter((bot) => bot.isAlive)
+      .map((bot) => bot.debugSummary);
+  }
+
   async loadModels() {
     const loaded = await SceneLoader.ImportMeshAsync(
       "",
@@ -99,7 +105,7 @@ export class BotManager {
     if (!source) {
       throw new Error("Opponent model did not contain a root mesh");
     }
-    loaded.animationGroups.forEach((animation) => animation.stop());
+    loaded.animationGroups.forEach((animation) => animation.start(true));
     source.setEnabled(false);
     this.modelSource = source;
   }
@@ -307,22 +313,21 @@ export class BotManager {
 
   private spawnBot(spawn: Vector3) {
     if (!this.modelSource || !this.wave) return;
+    const visual = this.modelSource.clone(
+      `bot ${this.nextBotId} visual`,
+      null,
+      false,
+    );
+    if (!visual) {
+      throw new Error(`Could not clone opponent model ${this.nextBotId}`);
+    }
     const bot = new BotController(
       this.scene,
       spawn,
       this.nextBotId,
       this.wave,
+      visual,
     );
-    const visual = this.modelSource.clone(
-      `bot ${this.nextBotId} visual`,
-      null,
-      true,
-    );
-    if (!visual) {
-      bot.dispose();
-      throw new Error(`Could not clone opponent model ${this.nextBotId}`);
-    }
-    bot.setVisual(visual);
     this.bots.push(bot);
     this.nextBotId += 1;
     this.spawnedCount += 1;
