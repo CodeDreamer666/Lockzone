@@ -9,6 +9,10 @@ import {
 } from "@babylonjs/core";
 import { Weapon } from "../combat/Weapon";
 import { GAME_CONFIG, type WaveConfig } from "../game/gameConfig";
+import {
+  isInsideSafeZone,
+  movementEntersSafeZone,
+} from "../map/safeZones";
 import { BotVisual } from "./BotVisual";
 
 export type BotState = "idle" | "alert" | "chase" | "attack" | "search" | "dead";
@@ -156,7 +160,10 @@ export class BotController {
 
   private updatePerception(context: BotUpdateContext) {
     this.nextPerceptionAt = context.now + GAME_CONFIG.bot.perceptionSeconds * this.difficulty.perceptionMultiplier * 1000 + (this.id % 7) * 5;
-    const visible = this.hasVisualContact(context.playerTarget, context.cover);
+    const visible = (
+      !isInsideSafeZone(context.playerPosition)
+      && this.hasVisualContact(context.playerTarget, context.cover)
+    );
     if (visible) {
       if (!this.canSeePlayer) {
         this.alertUntil = context.now + this.reactionDelay * 1000;
@@ -221,6 +228,16 @@ export class BotController {
     const baseSpeed = GAME_CONFIG.player.forwardSpeed * 0.82 * this.difficulty.movementMultiplier;
     const requestedMovement = direction.scale(baseSpeed * turnSpeedScale * context.dt);
     const previous = this.mesh.position.clone();
+    const requestedPosition = previous.add(requestedMovement);
+    if (movementEntersSafeZone(previous, requestedPosition)) {
+      const side = (this.id + this.blockedMoves) % 2 === 0 ? 1 : -1;
+      this.avoidanceTarget = this.mesh.position.add(
+        new Vector3(-direction.z * side, 0, direction.x * side).scale(6),
+      );
+      this.blockedMoves += 1;
+      this.applyGravityAndGround(context);
+      return;
+    }
     this.mesh.moveWithCollisions(new Vector3(requestedMovement.x, 0, requestedMovement.z));
     const actualHorizontal = Math.hypot(this.mesh.position.x - previous.x, this.mesh.position.z - previous.z);
     if (actualHorizontal < requestedMovement.length() * 0.08) {
@@ -323,7 +340,14 @@ export class BotController {
   }
 
   private tryShoot(context: BotUpdateContext) {
-    if (this.state !== "attack" || !this.canSeePlayer || context.now < this.reactionReadyAt) return;
+    if (
+      this.state !== "attack"
+      || !this.canSeePlayer
+      || isInsideSafeZone(context.playerPosition)
+      || context.now < this.reactionReadyAt
+    ) {
+      return;
+    }
     if (this.nextFireAt === 0) {
       this.nextFireAt = context.now + (this.id % 7) * 65;
     }

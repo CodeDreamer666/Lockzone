@@ -10,6 +10,7 @@ import {
 import {
   type WaveConfig,
 } from "../game/gameConfig";
+import { isInsideSafeZone } from "../map/safeZones";
 import { BotController } from "./BotController";
 
 const MINIMUM_SPAWN_DISTANCE = 12;
@@ -47,7 +48,7 @@ export class BotManager {
     );
     this.spawnPoints = [...spawns, ...elevatedResourceSpawns].map(
       (point) => point.clone(),
-    );
+    ).filter((point) => !isInsideSafeZone(point));
     this.patrolPoints = this.createPatrolPoints(
       spawns,
       resourcePoints,
@@ -406,6 +407,8 @@ export class BotManager {
       ...spawns,
       ...resourcePoints,
       ...elevatedOffsets,
-    ].map((point) => point.clone());
+    ]
+      .filter((point) => !isInsideSafeZone(point))
+      .map((point) => point.clone());
   }
 }

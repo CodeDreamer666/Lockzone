@@ -27,6 +27,7 @@ import {
   type SurfaceType,
 } from "../map/createMap";
 import { createMovementTestMap } from "../map/createMovementTestMap";
+import { isInsideSafeZone } from "../map/safeZones";
 import { GameUI } from "../ui/GameUI";
 import {
   GAME_CONFIG,
@@ -42,6 +43,7 @@ import { clampDeltaSeconds } from "./movementMath";
 import { PushablePropController } from "./PushablePropController";
 
 type MatchPhase = "opening" | "active" | "transition" | "ended";
+const MAP_DEVELOPMENT_MODE = true;
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -112,24 +114,42 @@ export class Game {
   }
 
   private async startMatch() {
-    this.ui.showLoading(12, "Preparing mission systems");
+    this.ui.showLoading(
+      12,
+      MAP_DEVELOPMENT_MODE
+        ? "Preparing map development mode"
+        : "Preparing mission systems",
+    );
     await this.waitForPaint();
     this.weapon.dispose();
     this.botManager?.dispose();
     this.scene?.dispose();
     this.resetMatch();
     this.createScene();
-    this.ui.showLoading(64, "Loading hostile units");
+    this.ui.showLoading(
+      64,
+      MAP_DEVELOPMENT_MODE
+        ? "Building four combat zones"
+        : "Loading hostile units",
+    );
     this.audio.start();
     this.audio.setPaused(false);
     try {
-      await this.botManager?.loadModels();
+      if (!MAP_DEVELOPMENT_MODE) {
+        await this.botManager?.loadModels();
+      }
       this.matchActive = true;
       this.paused = false;
-      this.phase = this.movementTestMode ? "active" : "opening";
-      this.feedback = this.movementTestMode
-        ? "Movement test area — F7 shows controller diagnostics"
-        : "Prepare for Wave 1";
+      this.phase = (
+        MAP_DEVELOPMENT_MODE || this.movementTestMode
+          ? "active"
+          : "opening"
+      );
+      this.feedback = MAP_DEVELOPMENT_MODE
+        ? "MAP DEVELOPMENT MODE — gameplay temporarily disabled"
+        : this.movementTestMode
+          ? "Movement test area — F7 shows controller diagnostics"
+          : "Prepare for Wave 1";
       this.ui.showHud();
       this.updateCollisionDebugReadout(performance.now());
       this.resetActiveContactDebug();
@@ -192,7 +212,7 @@ export class Game {
     );
     this.pushablePropController = new PushablePropController(map.pushableProps, this.cover);
     this.createPlayerTarget();
-    this.botManager = this.movementTestMode
+    this.botManager = this.movementTestMode || MAP_DEVELOPMENT_MODE
       ? undefined
       : new BotManager(
         this.scene,
@@ -204,7 +224,9 @@ export class Game {
           this.totalEnemiesDefeated += 1;
         },
       );
-    this.createFirstPersonWeapon();
+    if (!MAP_DEVELOPMENT_MODE) {
+      this.createFirstPersonWeapon();
+    }
     this.scene.onBeforeRenderObservable.add(() => this.update());
   }
 
@@ -369,7 +391,7 @@ export class Game {
       if (!this.matchActive) return;
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
-      if (event.code === "KeyR") this.reload();
+      if (event.code === "KeyR" && !MAP_DEVELOPMENT_MODE) this.reload();
     };
     window.onkeyup = (event) => this.keys.delete(event.code);
     window.onblur = () => this.clearMovementInput();
@@ -405,6 +427,14 @@ export class Game {
     this.movePlayer(deltaSeconds);
     this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
+
+    if (MAP_DEVELOPMENT_MODE) {
+      this.feedback = "MAP DEVELOPMENT MODE — gameplay temporarily disabled";
+      this.updateHud();
+      this.updateCollisionDebugReadout(now);
+      this.updateActiveContactDebug();
+      return;
+    }
 
     if (this.phase === "active") {
       this.remaining = Math.max(0, this.remaining - deltaSeconds);
@@ -1335,6 +1365,10 @@ export class Game {
 
   private shoot(now: number) {
     if (this.phase !== "active") return;
+    if (isInsideSafeZone(this.camera.position)) {
+      this.feedback = "SAFE ZONE — weapons disabled";
+      return;
+    }
     if (this.weapon.magazine === 0) {
       this.audio.play("empty");
       this.reload();
