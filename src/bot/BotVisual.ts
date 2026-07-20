@@ -17,26 +17,143 @@ export class BotVisual {
   constructor(
     scene: Scene,
     id: number,
-    model: TransformNode,
     collisionMesh: Mesh,
   ) {
     this.root = new TransformNode(`bot ${id} visual`, scene);
     this.root.parent = collisionMesh;
 
-    model.parent = this.root;
-    model.position.set(0, -1.3, 0);
-    model.rotation.set(0, Math.PI, 0);
-    model.scaling.setAll(1.25);
-    model.setEnabled(true);
-    model.getChildMeshes().forEach((mesh) => {
-      mesh.isPickable = false;
-      mesh.setEnabled(true);
-    });
-
+    const uniform = this.createMaterial(
+      scene,
+      `bot ${id} uniform material`,
+      new Color3(0.12, 0.135, 0.14),
+    );
+    const armor = this.createMaterial(
+      scene,
+      `bot ${id} armor material`,
+      new Color3(0.055, 0.065, 0.07),
+    );
+    const fabric = this.createMaterial(
+      scene,
+      `bot ${id} face covering material`,
+      new Color3(0.075, 0.085, 0.09),
+    );
+    const visor = this.createMaterial(
+      scene,
+      `bot ${id} visor material`,
+      new Color3(0.035, 0.075, 0.09),
+      new Color3(0.015, 0.035, 0.045),
+    );
+    const pouch = this.createMaterial(
+      scene,
+      `bot ${id} pouch material`,
+      new Color3(0.16, 0.17, 0.16),
+    );
     const weaponMaterial = this.createMaterial(
       scene,
       `bot ${id} weapon material`,
       new Color3(0.025, 0.03, 0.035),
+    );
+    this.addCapsule(
+      scene,
+      `bot ${id} torso`,
+      new Vector3(0, 0.05, 0),
+      1.12,
+      0.31,
+      uniform,
+    );
+    this.addBox(
+      scene,
+      `bot ${id} plate carrier`,
+      new Vector3(0, 0.18, 0.18),
+      [0.62, 0.72, 0.24],
+      armor,
+    );
+    this.addBox(
+      scene,
+      `bot ${id} rear armor`,
+      new Vector3(0, 0.18, -0.15),
+      [0.58, 0.66, 0.16],
+      armor,
+    );
+    [-0.22, 0, 0.22].forEach((x, index) => {
+      this.addBox(
+        scene,
+        `bot ${id} ammunition pouch ${index}`,
+        new Vector3(x, -0.05, 0.34),
+        [0.16, 0.3, 0.13],
+        pouch,
+      );
+    });
+    [-0.47, 0.47].forEach((x, index) => {
+      this.addCapsule(
+        scene,
+        `bot ${id} arm ${index}`,
+        new Vector3(x, 0.02, 0),
+        1.02,
+        0.13,
+        uniform,
+        0.12,
+      );
+      this.addBox(
+        scene,
+        `bot ${id} glove ${index}`,
+        new Vector3(x, -0.5, 0.04),
+        [0.22, 0.24, 0.18],
+        armor,
+      );
+    });
+    [-0.2, 0.2].forEach((x, index) => {
+      this.addCapsule(
+        scene,
+        `bot ${id} leg ${index}`,
+        new Vector3(x, -0.78, 0),
+        1.08,
+        0.16,
+        uniform,
+      );
+      this.addBox(
+        scene,
+        `bot ${id} boot ${index}`,
+        new Vector3(x, -1.25, 0.08),
+        [0.3, 0.28, 0.5],
+        armor,
+      );
+    });
+    this.addSphere(
+      scene,
+      `bot ${id} head`,
+      new Vector3(0, 0.79, 0),
+      0.5,
+      fabric,
+    );
+    this.addSphere(
+      scene,
+      `bot ${id} tactical helmet`,
+      new Vector3(0, 0.92, -0.01),
+      0.62,
+      armor,
+      new Vector3(1.08, 0.72, 1.08),
+    );
+    this.addBox(
+      scene,
+      `bot ${id} dark visor`,
+      new Vector3(0, 0.87, 0.27),
+      [0.48, 0.17, 0.08],
+      visor,
+    );
+    this.addBox(
+      scene,
+      `bot ${id} face covering`,
+      new Vector3(0, 0.67, 0.24),
+      [0.38, 0.23, 0.1],
+      fabric,
+    );
+    this.addBox(
+      scene,
+      `bot ${id} helmet rail`,
+      new Vector3(0.31, 0.94, 0),
+      [0.08, 0.14, 0.3],
+      pouch,
     );
     const flashMaterial = this.createMaterial(
       scene,
@@ -113,6 +230,47 @@ export class BotVisual {
     );
     part.parent = this.root;
     part.position.copyFrom(position);
+    part.material = material;
+    part.isPickable = false;
+  }
+
+  private addCapsule(
+    scene: Scene,
+    name: string,
+    position: Vector3,
+    height: number,
+    radius: number,
+    material: StandardMaterial,
+    rotationZ = 0,
+  ) {
+    const part = MeshBuilder.CreateCapsule(
+      name,
+      { height, radius },
+      scene,
+    );
+    part.parent = this.root;
+    part.position.copyFrom(position);
+    part.rotation.z = rotationZ;
+    part.material = material;
+    part.isPickable = false;
+  }
+
+  private addSphere(
+    scene: Scene,
+    name: string,
+    position: Vector3,
+    diameter: number,
+    material: StandardMaterial,
+    scaling = Vector3.One(),
+  ) {
+    const part = MeshBuilder.CreateSphere(
+      name,
+      { diameter, segments: 16 },
+      scene,
+    );
+    part.parent = this.root;
+    part.position.copyFrom(position);
+    part.scaling.copyFrom(scaling);
     part.material = material;
     part.isPickable = false;
   }

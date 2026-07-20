@@ -10,7 +10,7 @@ interface PauseActions {
 
 export interface HudValues {
   wave: number;
-  totalWaves: number;
+  totalWaves?: number;
   health: number;
   magazine: number;
   enemiesAlive: number;
@@ -120,8 +120,8 @@ export class GameUI {
   showHud() {
     this.root.innerHTML = `
       <div class="hud top">
-        <div id="wave">WAVE 1 / 3</div>
-        <div id="timer">03:00</div>
+        <div id="wave">WAVE 1</div>
+        <div id="timer">00:00</div>
       </div>
       <div class="crosshair" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
       <div class="scope-overlay" aria-hidden="true">
@@ -157,7 +157,7 @@ export class GameUI {
   }
 
   update(values: HudValues) {
-    this.setText("wave", `WAVE ${values.wave} / ${values.totalWaves}`);
+    this.setText("wave", `WAVE ${values.wave}`);
     this.setText("health", String(Math.round(values.health)));
     this.setText("ammo", String(values.magazine));
     this.setText("enemies-alive", String(values.enemiesAlive));

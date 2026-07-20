@@ -38,10 +38,9 @@ export const GAME_CONFIG = {
 } as const;
 
 export interface WaveConfig {
-  number: 1 | 2 | 3;
+  number: number;
   name: string;
   totalEnemies: number;
-  durationSeconds: number;
   maximumAlive: number;
   movementMultiplier: number;
   reactionSeconds: number;
@@ -52,66 +51,29 @@ export interface WaveConfig {
   searchRadius: number;
   perceptionMultiplier: number;
   aggressionMultiplier: number;
-  elevatedSpawnFrequency: number;
   replacementDelayMs: number;
 }
 
-export const WAVE_CONFIGS: readonly WaveConfig[] = [
-  {
-    number: 1,
-    name: "Introduction",
-    totalEnemies: 20,
-    durationSeconds: 3 * 60,
-    maximumAlive: 5,
-    movementMultiplier: 1,
+export function createWaveConfig(number: number): WaveConfig {
+  const totalEnemies = number * 5;
+
+  return {
+    number,
+    name: `Wave ${number}`,
+    totalEnemies,
+    maximumAlive: Math.min(totalEnemies, 8),
+    movementMultiplier: Math.min(1.25, 1 + (number - 1) * 0.025),
     reactionSeconds: 0.6,
-    effectiveAccuracy: 0.5,
+    effectiveAccuracy: 0,
     playerRegenerationDelayMs: 800,
     roundsPerMinute: 180,
-    searchSeconds: 3,
-    searchRadius: 2,
+    searchSeconds: 4,
+    searchRadius: 4,
     perceptionMultiplier: 1,
     aggressionMultiplier: 1,
-    elevatedSpawnFrequency: 5,
-    replacementDelayMs: 1250,
-  },
-  {
-    number: 2,
-    name: "Pressure",
-    totalEnemies: 28,
-    durationSeconds: 5 * 60,
-    maximumAlive: 7,
-    movementMultiplier: 1.1,
-    reactionSeconds: 0.5,
-    effectiveAccuracy: 0.7,
-    playerRegenerationDelayMs: 1200,
-    roundsPerMinute: 220,
-    searchSeconds: 5,
-    searchRadius: 4,
-    perceptionMultiplier: 0.82,
-    aggressionMultiplier: 1.16,
-    elevatedSpawnFrequency: 4,
-    replacementDelayMs: 1150,
-  },
-  {
-    number: 3,
-    name: "Final Assault",
-    totalEnemies: 40,
-    durationSeconds: 8 * 60,
-    maximumAlive: 10,
-    movementMultiplier: 1.2,
-    reactionSeconds: 0.3,
-    effectiveAccuracy: 0.8,
-    playerRegenerationDelayMs: 1500,
-    roundsPerMinute: 260,
-    searchSeconds: 7,
-    searchRadius: 6,
-    perceptionMultiplier: 0.68,
-    aggressionMultiplier: 1.3,
-    elevatedSpawnFrequency: 3,
-    replacementDelayMs: 1050,
-  },
-] as const;
+    replacementDelayMs: 650,
+  };
+}
 
 export const WAVE_TRANSITION_SECONDS = 5;
 export const OPENING_COUNTDOWN_SECONDS = 3;

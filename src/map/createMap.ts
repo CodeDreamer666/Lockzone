@@ -4,7 +4,6 @@ import {
   Mesh,
   MeshBuilder,
   PBRMaterial,
-  PointLight,
   Scene,
   StandardMaterial,
   Texture,
@@ -134,7 +133,6 @@ export function createMap(scene: Scene): MapData {
   );
   createQuadrantMarkings(decoration, materials);
   createSafeZones(scene, solid, decoration, materials);
-  createLighting(scene, decoration, materials);
   freezeStaticEnvironment(scene);
 
   return {
@@ -151,7 +149,7 @@ export function createMap(scene: Scene): MapData {
       new Vector3(-10, 1.7, 31),
       new Vector3(-31, 1.7, 10),
       new Vector3(10, 1.7, 31),
-      new Vector3(31, 1.7, 10),
+      new Vector3(36, 1.7, 10),
     ],
     resourcePoints: [
       new Vector3(-20, 1, -20),
@@ -173,16 +171,15 @@ function createDevelopmentZones(
 ) {
   createCargoYardZone(solid, decoration, materials);
   createIndustrialZone(solid, decoration, materials);
-  createShotgunWarehouseZone(solid, decoration, materials);
+  createShotgunWarehouseZone(solid, materials);
   createMarksmanZone(
     scene,
     solid,
-    decoration,
     cover,
     walkableSurfaces,
     materials,
   );
-  createBotSpawnPlaceholders(solid, decoration, materials);
+  createBotSpawnMarkers(decoration, materials);
 }
 
 function createCargoYardZone(
@@ -190,15 +187,6 @@ function createCargoYardZone(
   decoration: DecorationBuilder,
   materials: ArenaMaterials,
 ) {
-  createWarningSign(
-    decoration,
-    materials,
-    "ZONE A // ASSAULT RIFLE CARGO YARD",
-    new Vector3(-20, 3.1, -0.72),
-    18,
-    "cargo yard zone sign",
-  );
-
   const cargo: Array<[number, number, number, PBRMaterial, string]> = [
     [-29, -24, 0, materials.containerBlue, "cargo west blue"],
     [-18, -27, Math.PI / 2, materials.containerRed, "cargo south red"],
@@ -219,20 +207,147 @@ function createCargoYardZone(
     );
   });
 
-  [
-    [-20, -18],
-    [-14, -15],
-    [-32, -17],
-    [-7, -30],
-  ].forEach(([x, z], index) => {
-    createCrateCluster(
+  const denseCargo: Array<[
+    number,
+    number,
+    number,
+    number,
+    number,
+    PBRMaterial,
+  ]> = [
+    [-35, -18, 2.4, 2.2, 4.8, materials.containerOlive],
+    [-27, -31, 4.6, 2.4, 2.4, materials.containerBlue],
+    [-21, -7, 5.2, 2.2, 2.2, materials.containerRed],
+    [-14, -20, 3.6, 1.8, 2.2, materials.containerOlive],
+    [-7, -12, 2.5, 2.5, 4.2, materials.containerBlue],
+    [-35, -7, 2.4, 1.8, 2.4, materials.containerRed],
+  ];
+  denseCargo.forEach(([x, z, width, height, depth, material], index) => {
+    createFramedCargoBox(
       solid,
       decoration,
       materials,
-      new Vector3(x, 0, z),
-      `cargo yard cover boxes ${index}`,
+      `cargo dense freight box ${index}`,
+      new Vector3(x, height / 2, z),
+      [width, height, depth],
+      material,
+      0,
     );
   });
+
+  const cargoClusters = [
+    new Vector3(-20, 0, -18),
+    new Vector3(-14, 0, -15),
+    new Vector3(-32, 0, -17),
+    new Vector3(-7, 0, -30),
+  ];
+  cargoClusters.forEach((center, clusterIndex) => {
+    [
+      { x: -1.1, z: 0, width: 1.8, height: 1.5, depth: 1.8 },
+      { x: 1, z: 0.35, width: 1.7, height: 1.2, depth: 1.7 },
+      { x: -0.2, z: 0.2, width: 1.5, height: 1.35, depth: 1.5 },
+    ].forEach((box, boxIndex) => {
+      createFramedCargoBox(
+        solid,
+        decoration,
+        materials,
+        `cargo framed cover ${clusterIndex}-${boxIndex}`,
+        new Vector3(
+          center.x + box.x,
+          box.height / 2,
+          center.z + box.z,
+        ),
+        [box.width, box.height, box.depth],
+        [
+          materials.containerBlue,
+          materials.containerRed,
+          materials.containerOlive,
+        ][(clusterIndex + boxIndex) % 3],
+        (clusterIndex % 2 === 0 ? 1 : -1) * 0.04,
+      );
+    });
+  });
+
+  [
+    [-25, -22, 0],
+    [-17, -34, Math.PI / 2],
+    [-10, -26, 0],
+    [-35, -13, Math.PI / 2],
+    [-17, -11, Math.PI / 2],
+  ].forEach(([x, z, rotation], index) => {
+    createConcreteBarrier(
+      solid,
+      materials,
+      new Vector3(x, 0.65, z),
+      rotation,
+      `cargo medium range barrier ${index}`,
+    );
+  });
+}
+
+function createFramedCargoBox(
+  solid: SolidBuilder,
+  decoration: DecorationBuilder,
+  materials: ArenaMaterials,
+  name: string,
+  position: Vector3,
+  size: [number, number, number],
+  cargoMaterial: PBRMaterial,
+  rotation: number,
+) {
+  const cargo = solid(
+    name,
+    position,
+    size,
+    cargoMaterial,
+    { bulletMaterial: "metal" },
+  );
+  cargo.rotation.y = rotation;
+
+  const placeFrame = (
+    frameName: string,
+    localPosition: Vector3,
+    frameSize: [number, number, number],
+  ) => {
+    const frame = decoration(
+      frameName,
+      position.add(rotateHorizontalOffset(localPosition, rotation)),
+      frameSize,
+      materials.containerFrame,
+    );
+    frame.rotation.y = rotation;
+  };
+  const [width, height, depth] = size;
+  const edge = 0.12;
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  const halfDepth = depth / 2;
+
+  for (const x of [-halfWidth, halfWidth]) {
+    for (const z of [-halfDepth, halfDepth]) {
+      placeFrame(
+        `${name} corner ${x}-${z}`,
+        new Vector3(x, 0, z),
+        [edge, height + edge, edge],
+      );
+    }
+  }
+  for (const y of [-halfHeight, halfHeight]) {
+    for (const z of [-halfDepth, halfDepth]) {
+      placeFrame(
+        `${name} horizontal frame ${y}-${z}`,
+        new Vector3(0, y, z),
+        [width + edge, edge, edge],
+      );
+    }
+    for (const x of [-halfWidth, halfWidth]) {
+      placeFrame(
+        `${name} depth frame ${y}-${x}`,
+        new Vector3(x, y, 0),
+        [edge, edge, depth + edge],
+      );
+    }
+  }
 }
 
 function createIndustrialZone(
@@ -240,15 +355,6 @@ function createIndustrialZone(
   decoration: DecorationBuilder,
   materials: ArenaMaterials,
 ) {
-  createWarningSign(
-    decoration,
-    materials,
-    "ZONE B // SMG INDUSTRIAL",
-    new Vector3(20, 3.1, -0.72),
-    15,
-    "industrial zone sign",
-  );
-
   const walls: Array<[number, number, number, number]> = [
     [7, -30, 12, 0.45],
     [15, -24, 0.45, 12],
@@ -258,6 +364,14 @@ function createIndustrialZone(
     [18, -16, 0.45, 11],
     [28, -10, 0.45, 12],
     [35, -16, 9, 0.45],
+    [11, -36, 0.45, 6],
+    [19, -36, 7, 0.45],
+    [28, -25, 0.45, 6],
+    [9, -7, 0.45, 8],
+    [20, -6, 8, 0.45],
+    [24, -22, 6, 0.45],
+    [13, -19, 0.45, 5],
+    [31, -14, 0.45, 5],
   ];
   walls.forEach(([x, z, width, depth], index) => {
     solid(
@@ -274,6 +388,9 @@ function createIndustrialZone(
     new Vector3(22, 0, -20),
     new Vector3(35, 0, -30),
     new Vector3(35, 0, -8),
+    new Vector3(11, 0, -15),
+    new Vector3(24, 0, -8),
+    new Vector3(28, 0, -34),
   ].forEach((position, index) => {
     createUtilityBox(
       solid,
@@ -283,22 +400,27 @@ function createIndustrialZone(
       `industrial machinery ${index}`,
     );
   });
+
+  [
+    [7, -25],
+    [19, -27],
+    [31, -20],
+    [16, -10],
+    [37, -11],
+  ].forEach(([x, z], index) => {
+    solid(
+      `industrial maze corner cover ${index}`,
+      new Vector3(x, 0.9, z),
+      [1.8, 1.8, 1.8],
+      materials.darkConcrete,
+    );
+  });
 }
 
 function createShotgunWarehouseZone(
   solid: SolidBuilder,
-  decoration: DecorationBuilder,
   materials: ArenaMaterials,
 ) {
-  createWarningSign(
-    decoration,
-    materials,
-    "ZONE C // SHOTGUN WAREHOUSE",
-    new Vector3(-20, 3.1, 0.72),
-    17,
-    "shotgun warehouse zone sign",
-  );
-
   const walls: Array<[string, number, number, number, number]> = [
     ["west outer", -38.4, 20, 0.5, 36],
     ["east outer south", -1.6, 8, 0.5, 12],
@@ -314,6 +436,14 @@ function createShotgunWarehouseZone(
     ["north rooms east", -9, 28, 16, 0.45],
     ["west partition", -29, 20.5, 0.45, 15],
     ["east partition", -10, 20.5, 0.45, 15],
+    ["south room west", -34, 7, 8, 0.45],
+    ["south room middle", -22, 7, 7, 0.45],
+    ["south room east", -9, 7, 10, 0.45],
+    ["west room divider south", -34, 10, 0.45, 6],
+    ["west room divider north", -34, 22, 0.45, 7],
+    ["center room west", -25, 22, 7, 0.45],
+    ["center room east", -14, 22, 7, 0.45],
+    ["north room divider", -24, 33, 0.45, 8],
   ];
   walls.forEach(([name, x, z, width, depth]) => {
     solid(
@@ -329,6 +459,10 @@ function createShotgunWarehouseZone(
     [-24, 8],
     [-15, 18],
     [-5, 34],
+    [-26, 17],
+    [-18, 25],
+    [-6, 9],
+    [-34, 25],
   ].forEach(([x, z], index) => {
     solid(
       `warehouse close range box ${index}`,
@@ -338,30 +472,40 @@ function createShotgunWarehouseZone(
       { bulletMaterial: "wood" },
     );
   });
+
+  [
+    [-35, 16, 0, 4.5],
+    [-24, 10, Math.PI / 2, 4],
+    [-15, 16, 0, 4.5],
+    [-6, 24, Math.PI / 2, 4],
+    [-27, 30, 0, 4],
+    [-13, 32, Math.PI / 2, 4.5],
+  ].forEach(([x, z, rotation, length], index) => {
+    const shelf = solid(
+      `warehouse storage shelf ${index}`,
+      new Vector3(x, 1.15, z),
+      [length, 2.3, 0.65],
+      materials.steel,
+      { bulletMaterial: "metal" },
+    );
+    shelf.rotation.y = rotation;
+  });
 }
 
 function createMarksmanZone(
   scene: Scene,
   solid: SolidBuilder,
-  decoration: DecorationBuilder,
   cover: Mesh[],
   walkableSurfaces: Mesh[],
   materials: ArenaMaterials,
 ) {
-  createWarningSign(
-    decoration,
-    materials,
-    "ZONE D // DMR + SNIPER RANGE",
-    new Vector3(20, 3.1, 0.72),
-    17,
-    "marksman zone sign",
-  );
-
-  [
+  const platforms = [
     { x: 10, z: 22, y: 4.2, width: 8, depth: 7 },
     { x: 29, z: 18, y: 6.2, width: 9, depth: 7 },
     { x: 18, z: 34, y: 3.2, width: 8, depth: 6 },
-  ].forEach((platform, index) => {
+    { x: 27, z: 32, y: 5.2, width: 7, depth: 6 },
+  ];
+  platforms.forEach((platform, index) => {
     const rampRun = Math.max(8, platform.y * 2.2);
     const top = solid(
       `marksman raised platform ${index}`,
@@ -385,6 +529,12 @@ function createMarksmanZone(
         { bulletMaterial: "metal" },
       );
     });
+    createPlatformRailings(
+      solid,
+      materials,
+      platform,
+      index,
+    );
     createWalkableRamp(
       scene,
       cover,
@@ -401,11 +551,48 @@ function createMarksmanZone(
     );
   });
 
+  createWalkableBridge(
+    scene,
+    cover,
+    walkableSurfaces,
+    materials,
+    "marksman bridge low west to high east",
+    new Vector3(platforms[0].x, platforms[0].y, platforms[0].z),
+    new Vector3(platforms[1].x, platforms[1].y, platforms[1].z),
+  );
+  createWalkableBridge(
+    scene,
+    cover,
+    walkableSurfaces,
+    materials,
+    "marksman bridge west to north",
+    new Vector3(platforms[0].x, platforms[0].y, platforms[0].z),
+    new Vector3(platforms[2].x, platforms[2].y, platforms[2].z),
+  );
+  createWalkableBridge(
+    scene,
+    cover,
+    walkableSurfaces,
+    materials,
+    "marksman bridge north towers",
+    new Vector3(platforms[2].x, platforms[2].y, platforms[2].z),
+    new Vector3(platforms[3].x, platforms[3].y, platforms[3].z),
+  );
+  createWalkableBridge(
+    scene,
+    cover,
+    walkableSurfaces,
+    materials,
+    "marksman bridge high towers",
+    new Vector3(platforms[1].x, platforms[1].y, platforms[1].z),
+    new Vector3(platforms[3].x, platforms[3].y, platforms[3].z),
+  );
+
   [
     [7, 8, 1.6, 7],
     [18, 13, 2, 2],
     [32, 29, 2, 5],
-    [12, 31, 1.5, 2],
+    [14, 31, 1.5, 2],
   ].forEach(([x, z, width, depth], index) => {
     solid(
       `marksman sparse sightline cover ${index}`,
@@ -414,6 +601,91 @@ function createMarksmanZone(
       materials.darkConcrete,
     );
   });
+}
+
+function createPlatformRailings(
+  solid: SolidBuilder,
+  materials: ArenaMaterials,
+  platform: {
+    x: number;
+    z: number;
+    y: number;
+    width: number;
+    depth: number;
+  },
+  index: number,
+) {
+  const railingY = platform.y + 0.85;
+  const opening = 4;
+  const sideSegment = (platform.depth - opening) / 2;
+  const endSegment = (platform.width - opening) / 2;
+  const sideOffset = opening / 2 + sideSegment / 2;
+  const endOffset = opening / 2 + endSegment / 2;
+
+  for (const side of [-1, 1]) {
+    for (const segment of [-1, 1]) {
+      createRailing(
+        solid,
+        materials,
+        new Vector3(
+          platform.x + side * (platform.width / 2 - 0.12),
+          railingY,
+          platform.z + segment * sideOffset,
+        ),
+        [0.16, 1.4, sideSegment],
+        `marksman platform ${index} ${side < 0 ? "west" : "east"} railing ${segment}`,
+      );
+    }
+    createRailing(
+      solid,
+      materials,
+      new Vector3(
+        platform.x + side * endOffset,
+        railingY,
+        platform.z + platform.depth / 2 - 0.12,
+      ),
+      [endSegment, 1.4, 0.16],
+      `marksman platform ${index} north railing ${side}`,
+    );
+  }
+}
+
+function createWalkableBridge(
+  scene: Scene,
+  cover: Mesh[],
+  walkableSurfaces: Mesh[],
+  materials: ArenaMaterials,
+  name: string,
+  start: Vector3,
+  end: Vector3,
+) {
+  const difference = end.subtract(start);
+  const horizontalLength = Math.hypot(difference.x, difference.z);
+  const slope = Math.atan2(difference.y, horizontalLength);
+  const yaw = Math.atan2(difference.x, difference.z);
+  const bridgeLength = Math.hypot(horizontalLength, difference.y);
+  const center = start.add(end).scale(0.5);
+  const bridge = MeshBuilder.CreateBox(
+    name,
+    { width: 2.4, height: 0.3, depth: bridgeLength },
+    scene,
+  );
+  bridge.position.copyFrom(center);
+  bridge.rotation.set(-slope, yaw, 0);
+  bridge.material = materials.steel;
+  bridge.checkCollisions = true;
+  bridge.isPickable = true;
+  bridge.receiveShadows = true;
+  bridge.metadata = {
+    bulletMaterial: "metal" satisfies BulletMaterial,
+    collisionCategory: "solid-cover",
+    collisionShape: "bridge",
+    physicsCategory: "solid",
+    supportsGrounding: true,
+    surfaceType: "metal" satisfies SurfaceType,
+  };
+  cover.push(bridge);
+  walkableSurfaces.push(bridge);
 }
 
 function createWalkableRamp(
@@ -458,8 +730,7 @@ function createWalkableRamp(
   walkableSurfaces.push(ramp);
 }
 
-function createBotSpawnPlaceholders(
-  solid: SolidBuilder,
+function createBotSpawnMarkers(
   decoration: DecorationBuilder,
   materials: ArenaMaterials,
 ) {
@@ -471,17 +742,10 @@ function createBotSpawnPlaceholders(
     new Vector3(-10, 0, 31),
     new Vector3(-31, 0, 10),
     new Vector3(10, 0, 31),
-    new Vector3(31, 0, 10),
+    new Vector3(36, 0, 10),
   ];
   positions.forEach((position, index) => {
     const quadrant = Math.floor(index / 2) + 1;
-    solid(
-      `zone ${quadrant} bot spawn placeholder ${index % 2 + 1}`,
-      position.add(new Vector3(0, 0.8, 0)),
-      [2.8, 1.6, 2.8],
-      materials.rustedSteel,
-      { bulletMaterial: "metal" },
-    );
     createWarningSign(
       decoration,
       materials,
@@ -1383,18 +1647,6 @@ function createForklift(
   body.rotation.y = rotation;
   mast.rotation.y = rotation;
   forks.rotation.y = rotation;
-  decoration(
-    "loading forklift beacon mount",
-    positionedFromBody(new Vector3(-0.78, 0.84, -0.72)),
-    [0.18, 0.22, 0.18],
-    materials.steel,
-  ).rotation.y = rotation;
-  decoration(
-    "loading forklift mounted warning beacon",
-    positionedFromBody(new Vector3(-0.78, 1.01, -0.72)),
-    [0.24, 0.12, 0.24],
-    materials.glow,
-  ).rotation.y = rotation;
 }
 
 function createPalletLoad(
@@ -1501,12 +1753,6 @@ function createGenerator(
     position.add(new Vector3(2.03, 0.9, 0)),
     [0.05, 0.8, 1.1],
     materials.steel,
-  );
-  decoration(
-    `${name} mounted indicator lens`,
-    position.add(new Vector3(2.065, 1.05, 0)),
-    [0.035, 0.14, 0.34],
-    materials.glow,
   );
 }
 
@@ -1835,84 +2081,6 @@ function createShopSign(
   );
 }
 
-function createLighting(
-  scene: Scene,
-  decoration: DecorationBuilder,
-  materials: ArenaMaterials,
-) {
-  const fixtures: Array<{
-    color: Color3;
-    intensity: number;
-    mountBottom: number;
-    position: Vector3;
-  }> = [
-    {
-      color: new Color3(1, 0.46, 0.16),
-      intensity: 0.8,
-      mountBottom: 3.4,
-      position: new Vector3(-18, 4.35, -28.65),
-    },
-    {
-      color: new Color3(0.4, 0.62, 0.74),
-      intensity: 0.72,
-      mountBottom: 0,
-      position: new Vector3(-15, 5.4, 8),
-    },
-    {
-      color: new Color3(1, 0.42, 0.12),
-      intensity: 0.82,
-      mountBottom: 4.6,
-      position: new Vector3(-6, 6.2, 13.05),
-    },
-    {
-      color: new Color3(0.42, 0.65, 0.78),
-      intensity: 0.72,
-      mountBottom: 7.2,
-      position: new Vector3(21, 9.95, 20),
-    },
-    {
-      color: new Color3(1, 0.45, 0.14),
-      intensity: 0.76,
-      mountBottom: 0,
-      position: new Vector3(23, 5.1, -9),
-    },
-  ];
-
-  fixtures.forEach((fixture, index) => {
-    const mountHeight = fixture.position.y - fixture.mountBottom;
-    decoration(
-      `industrial light support ${index}`,
-      new Vector3(
-        fixture.position.x,
-        fixture.mountBottom + mountHeight / 2,
-        fixture.position.z,
-      ),
-      [0.14, mountHeight, 0.14],
-      materials.steel,
-    );
-    decoration(
-      `industrial light housing ${index}`,
-      fixture.position,
-      [0.78, 0.18, 0.58],
-      materials.steel,
-    );
-    decoration(
-      `industrial light lens ${index}`,
-      fixture.position.add(new Vector3(0, -0.11, 0)),
-      [0.5, 0.04, 0.34],
-      materials.glow,
-    );
-    const light = new PointLight(
-      `industrial light ${index}`,
-      fixture.position.add(new Vector3(0, -0.2, 0)),
-      scene,
-    );
-    light.diffuse = fixture.color;
-    light.intensity = fixture.intensity;
-    light.range = 14;
-  });
-}
-
 function rotateHorizontalOffset(offset: Vector3, rotation: number) {
   return new Vector3(
     offset.x * Math.cos(rotation) + offset.z * Math.sin(rotation),
@@ -2026,10 +2194,6 @@ function createArenaMaterials(scene: Scene) {
     new Color3(0.07, 0.17, 0.2),
     "glass",
   );
-  const glow = new StandardMaterial("warm industrial fixture", scene);
-  glow.emissiveColor = new Color3(1, 0.42, 0.1);
-  glow.diffuseColor = new Color3(0.1, 0.04, 0.01);
-
   return {
     asphalt,
     concrete,
@@ -2045,7 +2209,6 @@ function createArenaMaterials(scene: Scene) {
     sandbag,
     safety,
     glass,
-    glow,
   };
 }
 

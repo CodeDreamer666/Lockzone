@@ -1,6 +1,6 @@
 import {
   GAME_CONFIG,
-  WAVE_CONFIGS,
+  createWaveConfig,
   WAVE_TRANSITION_SECONDS,
 } from "../src/game/gameConfig.ts";
 import {
@@ -41,37 +41,22 @@ assert(headshotHealth === 0, `Expected two headshots to kill, got ${headshotHeal
 
 assert(GAME_CONFIG.regeneration.delayMs === 800, "Regeneration delay must be 800 ms");
 
-const expectedWaves = [
-  { total: 20, maximumAlive: 5, accuracy: 0.5, reaction: 0.6, movement: 1, regenerationDelayMs: 800 },
-  { total: 28, maximumAlive: 7, accuracy: 0.7, reaction: 0.5, movement: 1.1, regenerationDelayMs: 1200 },
-  { total: 40, maximumAlive: 10, accuracy: 0.8, reaction: 0.3, movement: 1.2, regenerationDelayMs: 1500 },
-];
-WAVE_CONFIGS.forEach((wave, index) => {
-  const expected = expectedWaves[index];
-  assert(wave.totalEnemies === expected.total, `Wave ${wave.number} total is incorrect`);
-  assert(wave.maximumAlive === expected.maximumAlive, `Wave ${wave.number} active limit is incorrect`);
-  assert(wave.effectiveAccuracy === expected.accuracy, `Wave ${wave.number} accuracy is incorrect`);
-  assert(wave.reactionSeconds === expected.reaction, `Wave ${wave.number} reaction delay is incorrect`);
-  assert(wave.movementMultiplier === expected.movement, `Wave ${wave.number} movement multiplier is incorrect`);
+const firstThreeWaves = [1, 2, 3].map(createWaveConfig);
+firstThreeWaves.forEach((wave, index) => {
+  assert(wave.number === index + 1, `Wave ${index + 1} number is incorrect`);
   assert(
-    wave.playerRegenerationDelayMs === expected.regenerationDelayMs,
-    `Wave ${wave.number} regeneration delay is incorrect`,
+    wave.totalEnemies === (index + 1) * 5,
+    `Wave ${index + 1} must add exactly five enemies`,
   );
   assert(
-    wave.replacementDelayMs >= 1000 && wave.replacementDelayMs <= 1500,
-    `Wave ${wave.number} replacement delay is outside 1–1.5 seconds`,
+    wave.maximumAlive <= wave.totalEnemies,
+    `Wave ${index + 1} active limit exceeds its total`,
+  );
+  assert(
+    wave.effectiveAccuracy === 0,
+    `Wave ${index + 1} enemy accuracy must remain disabled`,
   );
 });
-assert(
-  WAVE_CONFIGS[0].roundsPerMinute < WAVE_CONFIGS[1].roundsPerMinute
-  && WAVE_CONFIGS[1].roundsPerMinute < WAVE_CONFIGS[2].roundsPerMinute,
-  "Enemy firing cadence must increase across waves",
-);
-assert(
-  WAVE_CONFIGS[0].searchSeconds < WAVE_CONFIGS[1].searchSeconds
-  && WAVE_CONFIGS[1].searchSeconds < WAVE_CONFIGS[2].searchSeconds,
-  "Enemy search persistence must increase across waves",
-);
 assert(WAVE_TRANSITION_SECONDS === 5, "Wave transition must last 5 seconds");
 
 let magazine = GAME_CONFIG.weapon.magazineSize;

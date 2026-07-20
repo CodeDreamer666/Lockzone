@@ -31,10 +31,15 @@ import { isInsideSafeZone } from "../map/safeZones";
 import { GameUI } from "../ui/GameUI";
 import {
   GAME_CONFIG,
+  createWaveConfig,
   OPENING_COUNTDOWN_SECONDS,
-  WAVE_CONFIGS,
   WAVE_TRANSITION_SECONDS,
 } from "./gameConfig";
+import {
+  consumeLookDelta,
+  type LookDelta,
+  queueLookDelta,
+} from "./cameraLook";
 import {
   PlayerController,
   type MovementSnapshot,
@@ -43,7 +48,6 @@ import { clampDeltaSeconds } from "./movementMath";
 import { PushablePropController } from "./PushablePropController";
 
 type MatchPhase = "opening" | "active" | "transition" | "ended";
-const MAP_DEVELOPMENT_MODE = true;
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -60,7 +64,7 @@ export class Game {
   private playerHealth: number = GAME_CONFIG.player.health;
   private playerDamagedAt = -Infinity;
   private regenerationActive = false;
-  private remaining: number = WAVE_CONFIGS[0].durationSeconds;
+  private remaining = 0;
   private phase: MatchPhase = "opening";
   private phaseRemaining = OPENING_COUNTDOWN_SECONDS;
   private waveIndex = 0;
@@ -79,6 +83,7 @@ export class Game {
   private pushablePropController?: PushablePropController;
   private feedback = "Click Start to enter the arena";
   private sensitivity: number = GAME_CONFIG.camera.sensitivity;
+  private pendingLookDelta: LookDelta = { x: 0, y: 0 };
   private weaponRig?: TransformNode;
   private muzzleFlash?: Mesh;
   private recoil = 0;
@@ -103,8 +108,8 @@ export class Game {
   ).get("gameplayTest") ?? "victory";
   private gameplayTestNextActionAt = 0;
   private gameplayTestActionComplete = false;
-  private gameplayTestMaximumAlive = [0, 0, 0];
-  private gameplayTestElevatedSpawns = [0, 0, 0];
+  private gameplayTestMaximumAlive: number[] = [];
+  private gameplayTestElevatedSpawns: number[] = [];
 
   start() {
     this.engine.runRenderLoop(() => this.scene?.render());
@@ -116,9 +121,7 @@ export class Game {
   private async startMatch() {
     this.ui.showLoading(
       12,
-      MAP_DEVELOPMENT_MODE
-        ? "Preparing map development mode"
-        : "Preparing mission systems",
+      "Preparing mission systems",
     );
     await this.waitForPaint();
     this.weapon.dispose();
@@ -128,26 +131,16 @@ export class Game {
     this.createScene();
     this.ui.showLoading(
       64,
-      MAP_DEVELOPMENT_MODE
-        ? "Building four combat zones"
-        : "Loading hostile units",
+      "Loading hostile units",
     );
     this.audio.start();
     this.audio.setPaused(false);
     try {
-      if (!MAP_DEVELOPMENT_MODE) {
-        await this.botManager?.loadModels();
-      }
+      await this.botManager?.loadModels();
       this.matchActive = true;
       this.paused = false;
-      this.phase = (
-        MAP_DEVELOPMENT_MODE || this.movementTestMode
-          ? "active"
-          : "opening"
-      );
-      this.feedback = MAP_DEVELOPMENT_MODE
-        ? "MAP DEVELOPMENT MODE — gameplay temporarily disabled"
-        : this.movementTestMode
+      this.phase = this.movementTestMode ? "active" : "opening";
+      this.feedback = this.movementTestMode
           ? "Movement test area — F7 shows controller diagnostics"
           : "Prepare for Wave 1";
       this.ui.showHud();
@@ -175,7 +168,7 @@ export class Game {
     this.playerHealth = GAME_CONFIG.player.health;
     this.playerDamagedAt = -Infinity;
     this.regenerationActive = false;
-    this.remaining = WAVE_CONFIGS[0].durationSeconds;
+    this.remaining = 0;
     this.phase = "opening";
     this.phaseRemaining = OPENING_COUNTDOWN_SECONDS;
     this.waveIndex = 0;
@@ -187,8 +180,8 @@ export class Game {
     this.damageTaken = 0;
     this.gameplayTestNextActionAt = 0;
     this.gameplayTestActionComplete = false;
-    this.gameplayTestMaximumAlive = [0, 0, 0];
-    this.gameplayTestElevatedSpawns = [0, 0, 0];
+    this.gameplayTestMaximumAlive = [];
+    this.gameplayTestElevatedSpawns = [];
     this.playerController = undefined;
     this.pushablePropController = undefined;
     this.jumpQueued = false;
@@ -198,6 +191,7 @@ export class Game {
     this.feedback = "Prepare for Wave 1";
     this.mouseDown = false;
     this.recoil = 0;
+    this.clearLookInput();
     this.clearCombatEffects();
   }
 
@@ -212,7 +206,7 @@ export class Game {
     );
     this.pushablePropController = new PushablePropController(map.pushableProps, this.cover);
     this.createPlayerTarget();
-    this.botManager = this.movementTestMode || MAP_DEVELOPMENT_MODE
+    this.botManager = this.movementTestMode
       ? undefined
       : new BotManager(
         this.scene,
@@ -224,9 +218,7 @@ export class Game {
           this.totalEnemiesDefeated += 1;
         },
       );
-    if (!MAP_DEVELOPMENT_MODE) {
-      this.createFirstPersonWeapon();
-    }
+    this.createFirstPersonWeapon();
     this.scene.onBeforeRenderObservable.add(() => this.update());
   }
 
@@ -391,13 +383,27 @@ export class Game {
       if (!this.matchActive) return;
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
-      if (event.code === "KeyR" && !MAP_DEVELOPMENT_MODE) this.reload();
+      if (event.code === "KeyR") this.reload();
     };
     window.onkeyup = (event) => this.keys.delete(event.code);
-    window.onblur = () => this.clearMovementInput();
+    window.onblur = () => {
+      this.clearMovementInput();
+      this.clearLookInput();
+    };
     this.canvas.onmousedown = (event) => {
-      if (event.button === 0 && document.pointerLockElement === this.canvas) this.mouseDown = true;
-      if (event.button === 2 && document.pointerLockElement === this.canvas && this.phase === "active") this.aimDown = true;
+      if (
+        event.button === 0
+        && document.pointerLockElement === this.canvas
+      ) {
+        this.mouseDown = true;
+      }
+      if (
+        event.button === 2
+        && document.pointerLockElement === this.canvas
+        && this.phase === "active"
+      ) {
+        this.aimDown = true;
+      }
     };
     this.canvas.onmouseup = (event) => {
       if (event.button === 0) this.mouseDown = false;
@@ -406,11 +412,14 @@ export class Game {
     this.canvas.oncontextmenu = (event) => event.preventDefault();
     document.onmousemove = (event) => {
       if (document.pointerLockElement !== this.canvas || !this.matchActive) return;
-      const sensitivity = this.sensitivity * (1 - this.aimBlend * 0.52);
-      this.camera.rotation.y += event.movementX * sensitivity;
-      this.camera.rotation.x = Math.max(-GAME_CONFIG.camera.verticalLimit, Math.min(GAME_CONFIG.camera.verticalLimit, this.camera.rotation.x + event.movementY * sensitivity));
+      this.pendingLookDelta = queueLookDelta(
+        this.pendingLookDelta,
+        event.movementX,
+        event.movementY,
+      );
     };
     document.onpointerlockchange = () => {
+      this.clearLookInput();
       if (!document.pointerLockElement && this.matchActive && !this.paused) this.pauseMatch();
     };
     this.canvas.onclick = () => {
@@ -424,20 +433,13 @@ export class Game {
     if (deltaSeconds === 0) return;
     const now = performance.now();
     this.runElapsedSeconds += deltaSeconds;
+    this.updateCameraLook(deltaSeconds);
     this.movePlayer(deltaSeconds);
     this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
 
-    if (MAP_DEVELOPMENT_MODE) {
-      this.feedback = "MAP DEVELOPMENT MODE — gameplay temporarily disabled";
-      this.updateHud();
-      this.updateCollisionDebugReadout(now);
-      this.updateActiveContactDebug();
-      return;
-    }
-
     if (this.phase === "active") {
-      this.remaining = Math.max(0, this.remaining - deltaSeconds);
+      this.remaining += deltaSeconds;
       this.updatePlayerRegeneration(now, deltaSeconds);
       if (this.mouseDown) this.shoot(now);
       this.botManager?.update(
@@ -461,12 +463,6 @@ export class Game {
       );
       if (!this.movementTestMode && this.botManager?.isWaveComplete) {
         this.completeWave();
-      } else if (
-        !this.movementTestMode
-        && this.remaining === 0
-        && (this.botManager?.remaining ?? 0) > 0
-      ) {
-        this.finish("Defeat");
       }
     } else if (
       this.phase === "opening"
@@ -496,17 +492,16 @@ export class Game {
   }
 
   private startCurrentWave(now: number) {
-    const wave = WAVE_CONFIGS[this.waveIndex];
+    const wave = createWaveConfig(this.waveIndex + 1);
     this.phase = "active";
-    this.remaining = wave.durationSeconds;
+    this.remaining = 0;
     this.feedback = `${wave.name} engaged · ${wave.totalEnemies} enemies`;
     this.botManager?.startWave(wave, now);
   }
 
   private completeWave() {
     if (this.phase !== "active") return;
-    this.gameplayTestElevatedSpawns[this.waveIndex] =
-      this.botManager?.elevatedSpawned ?? 0;
+    this.gameplayTestElevatedSpawns[this.waveIndex] = 0;
     this.wavesCompleted += 1;
     this.botManager?.stopWave();
     this.clearCombatEffects();
@@ -517,26 +512,22 @@ export class Game {
     this.weapon.refill();
     this.regenerationActive = false;
     this.playerDamagedAt = -Infinity;
-    if (this.waveIndex === WAVE_CONFIGS.length - 1) {
-      this.finish("Victory");
-      return;
-    }
     this.waveIndex += 1;
     this.phase = "transition";
     this.phaseRemaining = WAVE_TRANSITION_SECONDS;
-    this.remaining = WAVE_CONFIGS[this.waveIndex].durationSeconds;
+    this.remaining = 0;
     this.feedback = "Wave Complete · Health and magazine restored";
   }
 
   private updateHud() {
-    const wave = WAVE_CONFIGS[this.waveIndex];
+    const wave = createWaveConfig(this.waveIndex + 1);
     const transitioning = (
       this.phase === "opening"
       || this.phase === "transition"
     );
     this.ui.update({
       wave: wave.number,
-      totalWaves: WAVE_CONFIGS.length,
+      totalWaves: undefined,
       health: this.playerHealth,
       magazine: this.weapon.magazine,
       enemiesAlive: transitioning ? 0 : (this.botManager?.alive ?? 0),
@@ -569,7 +560,7 @@ export class Game {
   private runGameplayTest(now: number) {
     const currentAlive = this.botManager?.alive ?? 0;
     this.gameplayTestMaximumAlive[this.waveIndex] = Math.max(
-      this.gameplayTestMaximumAlive[this.waveIndex],
+      this.gameplayTestMaximumAlive[this.waveIndex] ?? 0,
       currentAlive,
     );
     if (
@@ -580,16 +571,13 @@ export class Game {
       if (this.gameplayTestScenario === "healthDefeat") {
         this.gameplayTestActionComplete = true;
         this.damagePlayer(this.playerHealth, now);
-      } else if (this.gameplayTestScenario === "timerDefeat") {
-        this.gameplayTestActionComplete = true;
-        this.remaining = 0;
       } else if (
         this.gameplayTestScenario === "victory"
         &&
         currentAlive > 0
         && (
           (this.botManager?.defeated ?? 0) > 0
-          || currentAlive === WAVE_CONFIGS[this.waveIndex].maximumAlive
+          || currentAlive === createWaveConfig(this.waveIndex + 1).maximumAlive
         )
       ) {
         this.botManager?.eliminateActiveBots(now);
@@ -603,7 +591,7 @@ export class Game {
     this.ui.showGameplayTestReport({
       scenario: this.gameplayTestScenario,
       phase: this.phase,
-      wave: WAVE_CONFIGS[this.waveIndex].number,
+      wave: this.waveIndex + 1,
       timer: this.remaining,
       alive: this.botManager?.alive ?? 0,
       defeated: this.botManager?.defeated ?? 0,
@@ -662,6 +650,27 @@ export class Game {
   private clearMovementInput() {
     this.keys.clear();
     this.jumpQueued = false;
+  }
+
+  private updateCameraLook(deltaSeconds: number) {
+    const { applied, remaining } = consumeLookDelta(
+      this.pendingLookDelta,
+      deltaSeconds,
+    );
+    this.pendingLookDelta = remaining;
+    const sensitivity = this.sensitivity * (1 - this.aimBlend * 0.52);
+    this.camera.rotation.y += applied.x * sensitivity;
+    this.camera.rotation.x = Math.max(
+      -GAME_CONFIG.camera.verticalLimit,
+      Math.min(
+        GAME_CONFIG.camera.verticalLimit,
+        this.camera.rotation.x + applied.y * sensitivity,
+      ),
+    );
+  }
+
+  private clearLookInput() {
+    this.pendingLookDelta = { x: 0, y: 0 };
   }
 
   private updateAim(deltaSeconds: number) {
@@ -885,17 +894,17 @@ export class Game {
     });
 
     const locations = [
-      { name: "arrival spawn", x: -24, y: 2, z: -24 },
-      { name: "west container lane", x: -18, y: 2, z: -9 },
-      { name: "northwest circulation route", x: -21, y: 2, z: 15 },
-      { name: "central ground intersection", x: 0, y: 2, z: 7 },
-      { name: "loading apron", x: 8, y: 2, z: -23 },
-      { name: "warehouse interior", x: -7, y: 2, z: 20 },
-      { name: "warehouse rooftop", x: -7, y: 7, z: 20 },
-      { name: "east maintenance route", x: 21, y: 2, z: -7 },
-      { name: "guard tower stair route", x: 20, y: 5, z: 12 },
-      { name: "guard tower platform", x: 20, y: 9, z: 20 },
-      { name: "central catwalk", x: 0, y: 5, z: 1 },
+      { name: "cargo development spawn", x: -20, y: 2, z: -34 },
+      { name: "cargo central route", x: -22, y: 2, z: -20 },
+      { name: "cargo north route", x: -18, y: 2, z: -5 },
+      { name: "industrial south route", x: 5, y: 2, z: -35 },
+      { name: "industrial center route", x: 21, y: 2, z: -25 },
+      { name: "industrial north route", x: 36, y: 2, z: -7 },
+      { name: "warehouse south corridor", x: -20, y: 2, z: 4 },
+      { name: "warehouse center corridor", x: -22, y: 2, z: 16 },
+      { name: "warehouse north corridor", x: -18, y: 2, z: 31 },
+      { name: "marksman open lane", x: 21, y: 2, z: 8 },
+      { name: "marksman west tower ramp", x: 10, y: 2, z: 10 },
     ];
     const directions = [
       {
@@ -992,39 +1001,30 @@ export class Game {
       left: false,
       right: false,
     };
-    const left = {
-      forward: false,
-      backward: false,
-      left: true,
-      right: false,
-    };
     const elevationRoutes = [
       runElevationRoute(
-        "warehouse rooftop staircase",
-        new Vector3(8, GAME_CONFIG.player.standingHeight, 6.5),
+        "marksman west platform ramp",
+        new Vector3(10, GAME_CONFIG.player.standingHeight, 9.2),
         0,
-        [
-          { frames: 86, input: forward },
-          { frames: 42, input: left },
-        ],
+        [{ frames: 105, input: forward }],
       ),
       runElevationRoute(
-        "guard tower staircase",
-        new Vector3(20, GAME_CONFIG.player.standingHeight, 4.8),
+        "marksman high east platform ramp",
+        new Vector3(29, GAME_CONFIG.player.standingHeight, 0.8),
         0,
-        [{ frames: 132, input: forward }],
+        [{ frames: 150, input: forward }],
       ),
       runElevationRoute(
-        "central catwalk staircase",
-        new Vector3(-16.8, GAME_CONFIG.player.standingHeight, 1),
-        Math.PI / 2,
-        [{ frames: 84, input: forward }],
+        "marksman north platform ramp",
+        new Vector3(18, GAME_CONFIG.player.standingHeight, 23),
+        0,
+        [{ frames: 100, input: forward }],
       ),
       runElevationRoute(
-        "central catwalk east staircase",
-        new Vector3(16.8, GAME_CONFIG.player.standingHeight, 1),
-        -Math.PI / 2,
-        [{ frames: 84, input: forward }],
+        "marksman northeast platform ramp",
+        new Vector3(27, GAME_CONFIG.player.standingHeight, 17.5),
+        0,
+        [{ frames: 135, input: forward }],
       ),
     ];
     const runSurfaceJump = (
@@ -1075,42 +1075,27 @@ export class Game {
     const surfaceJumps = [
       runSurfaceJump(
         "asphalt ground",
-        new Vector3(-24, GAME_CONFIG.player.standingHeight, -24),
+        new Vector3(-20, GAME_CONFIG.player.standingHeight, -34),
         0.9,
       ),
       runSurfaceJump(
-        "single shipping container top",
-        new Vector3(-21, 4.3, -4),
+        "marksman west platform",
+        new Vector3(10, 6.125, 22),
         0.9,
       ),
       runSurfaceJump(
-        "stacked wooden crate top",
-        new Vector3(-2.7, 4.2, -6.9),
+        "marksman high east platform",
+        new Vector3(29, 8.125, 18),
         0.9,
       ),
       runSurfaceJump(
-        "warehouse stair landing",
-        new Vector3(7.35, 6.7, 16.1),
+        "marksman north platform",
+        new Vector3(18, 5.125, 34),
         0.9,
       ),
       runSurfaceJump(
-        "central catwalk",
-        new Vector3(0, 4.9, 1),
-        0.9,
-      ),
-      runSurfaceJump(
-        "warehouse rooftop",
-        new Vector3(-6, 6.7, 20),
-        0.9,
-      ),
-      runSurfaceJump(
-        "guard tower platform under canopy",
-        new Vector3(20, 8.925, 20),
-        0.9,
-      ),
-      runSurfaceJump(
-        "transformer cabinet top",
-        new Vector3(13, 4.1, 8),
+        "marksman northeast platform",
+        new Vector3(27, 7.125, 32),
         0.9,
       ),
     ];
@@ -1147,7 +1132,7 @@ export class Game {
     document.documentElement.dataset.mapMovementEvidence = JSON.stringify(evidence);
     console.info("Neon Duel complete-map movement smoke verification", evidence);
 
-    this.camera.position.set(-24, GAME_CONFIG.player.standingHeight, -24);
+    this.camera.position.set(-20, GAME_CONFIG.player.standingHeight, -34);
     this.camera.rotation.set(0, 0, 0);
     this.playerController.reset();
   }
@@ -1331,6 +1316,7 @@ export class Game {
     this.paused = true;
     this.mouseDown = false;
     this.cancelAim();
+    this.clearLookInput();
     this.clearMovementInput();
     this.audio.setPaused(true);
     document.exitPointerLock();
@@ -1465,7 +1451,7 @@ export class Game {
       || this.playerHealth <= 0
       || this.playerHealth >= GAME_CONFIG.player.health
       || now - this.playerDamagedAt
-        < WAVE_CONFIGS[this.waveIndex].playerRegenerationDelayMs
+        < createWaveConfig(this.waveIndex + 1).playerRegenerationDelayMs
     ) {
       this.regenerationActive = false;
       return;
@@ -1513,7 +1499,7 @@ export class Game {
       {
         result,
         wavesCompleted: this.wavesCompleted,
-        totalWaves: WAVE_CONFIGS.length,
+        totalWaves: this.wavesCompleted,
         enemiesDefeated: this.totalEnemiesDefeated,
         completionSeconds: this.runElapsedSeconds,
         shotsFired: this.shotsFired,

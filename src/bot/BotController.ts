@@ -4,7 +4,6 @@ import {
   MeshBuilder,
   Ray,
   Scene,
-  TransformNode,
   Vector3,
 } from "@babylonjs/core";
 import { Weapon } from "../combat/Weapon";
@@ -39,6 +38,7 @@ const ATTACK_TURN_SPEED = 5.4;
 const BOT_HEIGHT_FROM_GROUND = 1.3;
 const GROUND_PROBE_HEIGHT = 1.2;
 const GROUND_PROBE_DISTANCE = 4.5;
+const ENEMY_ATTACKS_ENABLED = false;
 
 export class BotController {
   readonly mesh: Mesh;
@@ -78,7 +78,6 @@ export class BotController {
     spawn: Vector3,
     readonly id: number,
     private readonly difficulty: WaveConfig,
-    model: TransformNode,
   ) {
     this.mesh = MeshBuilder.CreateCapsule(`bot ${id} collision`, { height: 2.6, radius: 0.42 }, scene);
     this.mesh.position.copyFrom(spawn);
@@ -108,7 +107,7 @@ export class BotController {
     this.headHitbox.visibility = 0.001;
     this.headHitbox.isPickable = true;
     this.headHitbox.metadata = { enemy: true, botId: id, hitZone: "head" };
-    this.visual = new BotVisual(scene, id, model, this.mesh);
+    this.visual = new BotVisual(scene, id, this.mesh);
     this.role = id % 3 === 0 ? "flank" : id % 3 === 1 ? "pressure" : "hold";
     this.reactionDelay = difficulty.reactionSeconds;
     this.accuracy = difficulty.effectiveAccuracy;
@@ -148,7 +147,9 @@ export class BotController {
     this.chooseState(context);
     this.move(context);
     this.turn(context.dt);
-    this.tryShoot(context);
+    if (ENEMY_ATTACKS_ENABLED) {
+      this.tryShoot(context);
+    }
     this.syncVisual(context.now);
   }
 

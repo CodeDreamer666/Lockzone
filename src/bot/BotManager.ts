@@ -1,10 +1,8 @@
-import "@babylonjs/loaders/glTF";
 import {
   AbstractMesh,
   Mesh,
   Ray,
   Scene,
-  SceneLoader,
   Vector3,
 } from "@babylonjs/core";
 import {
@@ -25,7 +23,6 @@ export class BotManager {
   private readonly patrolPoints: Vector3[];
   private readonly recentlyUsedSpawns: number[] = [];
   private readonly defeatedAt = new Map<BotController, number>();
-  private modelSource?: AbstractMesh;
   private wave?: WaveConfig;
   private lastGunshot?: { position: Vector3; time: number };
   private nextSpawnAt = Infinity;
@@ -43,10 +40,7 @@ export class BotManager {
     resourcePoints: Vector3[],
     private readonly onBotDefeated: (bot: BotController) => void,
   ) {
-    const elevatedResourceSpawns = resourcePoints.filter(
-      (point) => point.y > 4,
-    );
-    this.spawnPoints = [...spawns, ...elevatedResourceSpawns].map(
+    this.spawnPoints = spawns.map(
       (point) => point.clone(),
     ).filter((point) => !isInsideSafeZone(point));
     this.patrolPoints = this.createPatrolPoints(
@@ -95,21 +89,9 @@ export class BotManager {
   }
 
   async loadModels() {
-    const loaded = await SceneLoader.ImportMeshAsync(
-      "",
-      "/assets/",
-      "CesiumMan.glb",
-      this.scene,
-    );
-    const source = loaded.meshes.find(
-      (mesh) => mesh.name === "__root__",
-    ) ?? loaded.meshes[0];
-    if (!source) {
-      throw new Error("Opponent model did not contain a root mesh");
-    }
-    loaded.animationGroups.forEach((animation) => animation.start(true));
-    source.setEnabled(false);
-    this.modelSource = source;
+    // Tactical opponents are assembled from local Babylon primitives.
+    // Keep this async boundary so a rigged model can be restored later.
+    await Promise.resolve();
   }
 
   startWave(config: WaveConfig, now: number) {
@@ -118,7 +100,7 @@ export class BotManager {
     this.spawnedCount = 0;
     this.defeatedCount = 0;
     this.elevatedSpawnedCount = 0;
-    this.nextBotId = (config.number - 1) * 100;
+    this.nextBotId = (config.number - 1) * 1000;
     this.nextSpawnAt = now;
     this.waveActive = true;
     this.lastGunshot = undefined;
@@ -206,8 +188,6 @@ export class BotManager {
 
   dispose() {
     this.stopWave();
-    this.modelSource?.dispose();
-    this.modelSource = undefined;
   }
 
   private trySpawn(
@@ -253,15 +233,8 @@ export class BotManager {
     playerViewDirection: Vector3,
   ) {
     if (!this.wave) return undefined;
-    const shouldUseElevation = (
-      this.wave.number > 1
-      && (this.spawnedCount + 1) % this.wave.elevatedSpawnFrequency === 0
-    );
     const candidates = this.spawnPoints
       .map((position, index) => ({ position, index }))
-      .filter(({ position }) => (
-        shouldUseElevation ? position.y > 4 : position.y <= 4
-      ))
       .filter(({ position }) => this.isSpawnSafe(
         position,
         playerPosition,
@@ -332,6 +305,12 @@ export class BotManager {
     if (Math.abs(groundProbe.pickedPoint.y - (spawn.y - 1.3)) > 0.6) {
       return false;
     }
+    if (this.bots.some((bot) => (
+      bot.isAlive
+      && Vector3.DistanceSquared(bot.mesh.position, spawn) < 2.25
+    ))) {
+      return false;
+    }
 
     return !this.cover.some((mesh) => {
       if (this.ground.includes(mesh) || !mesh.isEnabled()) return false;
@@ -353,21 +332,20 @@ export class BotManager {
   }
 
   private spawnBot(spawn: Vector3) {
-    if (!this.modelSource || !this.wave) return;
-    const visual = this.modelSource.clone(
-      `bot ${this.nextBotId} visual`,
-      null,
-      false,
+    if (!this.wave) return;
+    const groundedSpawn = spawn.clone();
+    const groundProbe = this.scene.pickWithRay(
+      new Ray(spawn.add(new Vector3(0, 2, 0)), Vector3.Down(), 5),
+      (mesh) => this.ground.includes(mesh),
     );
-    if (!visual) {
-      throw new Error(`Could not clone opponent model ${this.nextBotId}`);
+    if (groundProbe?.pickedPoint) {
+      groundedSpawn.y = groundProbe.pickedPoint.y + 1.3;
     }
     const bot = new BotController(
       this.scene,
-      spawn,
+      groundedSpawn,
       this.nextBotId,
       this.wave,
-      visual,
     );
     this.bots.push(bot);
     this.nextBotId += 1;
