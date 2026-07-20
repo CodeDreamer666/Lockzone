@@ -12,7 +12,10 @@ export interface HudValues {
   wave: number;
   totalWaves?: number;
   health: number;
+  maximumHealth: number;
   magazine: number;
+  magazineSize: number;
+  weaponName: string;
   enemiesAlive: number;
   enemiesRemaining: number;
   remaining: number;
@@ -37,6 +40,25 @@ export interface GameResults {
 interface ResultActions {
   onRestart: () => void;
   onMainMenu: () => void;
+}
+
+export interface ShopMenuRow {
+  id: string;
+  label: string;
+  current: string;
+  addition: string;
+  selected?: boolean;
+}
+
+export interface ShopMenuData {
+  title: string;
+  summary: string;
+  rows: ShopMenuRow[];
+}
+
+interface ShopActions {
+  onPurchase: (id: string) => void;
+  onClose: () => void;
 }
 
 interface GameplayTestReport {
@@ -88,6 +110,8 @@ export class GameUI {
           <span><b>Left click</b> Fire</span>
           <span><b>Right click</b> Aim</span>
           <span><b>R</b> Reload</span>
+          <span><b>V</b> Knife</span>
+          <span><b>E</b> Use safe-zone shop</span>
           <span><b>Esc</b> Pause</span>
         </section>
         <p class="small">The mouse locks after the mission starts. Every elevated combat route has a grounded staircase or landing.</p>
@@ -108,7 +132,7 @@ export class GameUI {
           <button id="main-menu" class="text-action">Return to main menu</button>
         </div>
         <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>Esc</b> Pause</span>
+          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>V</b> Knife</span><span><b>E</b> Use safe-zone shop</span><span><b>Esc</b> Pause</span>
         </section>
       </main>`;
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
@@ -132,12 +156,13 @@ export class GameUI {
         </div>
       </div>
       <div id="feedback"></div>
+      <div id="shop-prompt" class="shop-prompt" hidden></div>
       <div id="wave-announcement" class="wave-announcement" hidden>
         <strong id="announcement-title"></strong>
         <span id="announcement-detail"></span>
       </div>
       <div class="hud bottom">
-        <div class="hud-readout hud-health"><span>HEALTH</span><b id="health">100</b></div>
+        <div class="hud-readout hud-health"><span>HEALTH</span><b id="health">100 / 100</b></div>
         <div class="hud-enemies">
           <div class="hud-readout hud-bots">
             <span>ALIVE</span>
@@ -148,7 +173,7 @@ export class GameUI {
             <b id="enemies-remaining">15</b>
           </div>
         </div>
-        <div class="hud-readout hud-ammo"><span>AMMUNITION</span><b id="ammo">30 / ∞</b></div>
+        <div class="hud-readout hud-ammo"><span id="weapon-name">ASSAULT RIFLE</span><b id="ammo">40 / 40</b></div>
       </div>`;
   }
 
@@ -156,10 +181,75 @@ export class GameUI {
     this.root.classList.toggle("is-aiming", aiming);
   }
 
+  setShopPrompt(message?: string) {
+    const prompt = document.querySelector<HTMLElement>("#shop-prompt");
+    if (!prompt) return;
+    prompt.hidden = message === undefined;
+    prompt.textContent = message ?? "";
+  }
+
+  showShop(data: ShopMenuData, actions: ShopActions) {
+    this.hideShop();
+    this.root.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div class="shop-backdrop" aria-hidden="true"></div>
+        <section id="shop-menu" class="shop-menu" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+          <div class="shop-header">
+            <div>
+              <p class="eyebrow">SAFE-ZONE SUPPLY TERMINAL</p>
+              <h2 id="shop-title">${data.title}</h2>
+              <p>${data.summary}</p>
+            </div>
+            <button id="close-shop" class="shop-close" aria-label="Close shop">Close</button>
+          </div>
+          <p class="shop-free-notice">Development pricing: every purchase is free and repeatable.</p>
+          <div class="shop-options">
+            ${data.rows.map((row) => `
+              <article class="shop-option${row.selected ? " is-selected" : ""}">
+                <div>
+                  <strong>${row.label}</strong>
+                  <span>Current: ${row.current}</span>
+                </div>
+                <button data-shop-purchase="${row.id}">
+                  ${row.selected ? "Selected" : `Free · ${row.addition}`}
+                </button>
+              </article>
+            `).join("")}
+          </div>
+          <p class="shop-help">Press E or Escape to close. The shop closes automatically when you leave the safe zone.</p>
+        </section>
+      `,
+    );
+    document.querySelector("#close-shop")?.addEventListener(
+      "click",
+      actions.onClose,
+    );
+    document.querySelectorAll<HTMLElement>("[data-shop-purchase]")
+      .forEach((button) => {
+        button.addEventListener("click", () => {
+          const id = button.dataset.shopPurchase;
+          if (id) actions.onPurchase(id);
+        });
+      });
+  }
+
+  hideShop() {
+    document.querySelector("#shop-menu")?.remove();
+    document.querySelector(".shop-backdrop")?.remove();
+  }
+
   update(values: HudValues) {
     this.setText("wave", `WAVE ${values.wave}`);
-    this.setText("health", String(Math.round(values.health)));
-    this.setText("ammo", String(values.magazine));
+    this.setText(
+      "health",
+      `${Math.round(values.health)} / ${Math.round(values.maximumHealth)}`,
+    );
+    this.setText(
+      "ammo",
+      `${values.magazine} / ${values.magazineSize}`,
+    );
+    this.setText("weapon-name", values.weaponName.toUpperCase());
     this.setText("enemies-alive", String(values.enemiesAlive));
     this.setText("enemies-remaining", String(values.enemiesRemaining));
     const totalSeconds = Math.ceil(values.remaining);

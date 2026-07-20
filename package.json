@@ -12,7 +12,8 @@
     "verify:props": "node --experimental-strip-types scripts/verify-pushable-props.mjs",
     "verify:combat": "node --experimental-strip-types scripts/verify-combat-balance.mjs",
     "verify:safe-zones": "node --experimental-strip-types scripts/verify-safe-zones.mjs",
-    "verify:camera-look": "node --experimental-strip-types scripts/verify-camera-look.mjs"
+    "verify:camera-look": "node --experimental-strip-types scripts/verify-camera-look.mjs",
+    "verify:shops": "node --experimental-strip-types scripts/verify-shop-system.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^8.2.0",

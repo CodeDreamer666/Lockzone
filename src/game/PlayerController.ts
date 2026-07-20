@@ -118,7 +118,11 @@ export class PlayerController {
     this.snapshot = this.createIdleSnapshot();
   }
 
-  update(input: PlayerMovementInput, deltaSeconds: number) {
+  update(
+    input: PlayerMovementInput,
+    deltaSeconds: number,
+    speedMultiplier = 1,
+  ) {
     this.justLanded = false;
     this.jumpBufferRemaining = Math.max(
       0,
@@ -143,9 +147,9 @@ export class PlayerController {
       input,
       this.camera.rotation.y,
       {
-        forward: GAME_CONFIG.player.forwardSpeed,
-        strafe: GAME_CONFIG.player.strafeSpeed,
-        backward: GAME_CONFIG.player.backwardSpeed,
+        forward: GAME_CONFIG.player.forwardSpeed * speedMultiplier,
+        strafe: GAME_CONFIG.player.strafeSpeed * speedMultiplier,
+        backward: GAME_CONFIG.player.backwardSpeed * speedMultiplier,
       },
     );
     const hasInput = desiredVelocity.x !== 0 || desiredVelocity.z !== 0;

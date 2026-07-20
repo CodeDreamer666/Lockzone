@@ -28,7 +28,10 @@ import {
 } from "../map/createMap";
 import { createMovementTestMap } from "../map/createMovementTestMap";
 import { isInsideSafeZone } from "../map/safeZones";
-import { GameUI } from "../ui/GameUI";
+import {
+  GameUI,
+  type ShopMenuData,
+} from "../ui/GameUI";
 import {
   GAME_CONFIG,
   createWaveConfig,
@@ -46,8 +49,23 @@ import {
 } from "./PlayerController";
 import { clampDeltaSeconds } from "./movementMath";
 import { PushablePropController } from "./PushablePropController";
+import {
+  applyShopPurchase,
+  createInitialShopState,
+  currentWeaponStats,
+  getShopAtPosition,
+  isShopPurchaseId,
+  movementSpeedMultiplier,
+  SHOP_NAMES,
+  type RunShopState,
+  type ShopKind,
+  type ShopPurchaseId,
+  WEAPON_DEFINITIONS,
+} from "./shopSystem";
 
 type MatchPhase = "opening" | "active" | "transition" | "ended";
+const KNIFE_RANGE = 2.4;
+const KNIFE_COOLDOWN_MS = 520;
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -62,6 +80,10 @@ export class Game {
   private cover: AbstractMesh[] = [];
   private walkableSurfaces: AbstractMesh[] = [];
   private playerHealth: number = GAME_CONFIG.player.health;
+  private shopState: RunShopState = createInitialShopState();
+  private nearbyShop?: ShopKind;
+  private activeShop?: ShopKind;
+  private lastKnifeAt = -Infinity;
   private playerDamagedAt = -Infinity;
   private regenerationActive = false;
   private remaining = 0;
@@ -165,7 +187,13 @@ export class Game {
 
   private resetMatch() {
     this.weapon = new Weapon();
-    this.playerHealth = GAME_CONFIG.player.health;
+    this.shopState = createInitialShopState();
+    this.syncWeaponStats(true);
+    this.playerHealth = this.shopState.maximumHealth;
+    this.nearbyShop = undefined;
+    this.activeShop = undefined;
+    this.lastKnifeAt = -Infinity;
+    this.ui.hideShop();
     this.playerDamagedAt = -Infinity;
     this.regenerationActive = false;
     this.remaining = 0;
@@ -367,7 +395,7 @@ export class Game {
 
   private bindControls() {
     window.onkeydown = (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "KeyE", "KeyV", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
       if (event.code === "F3" && this.collisionDebugAvailable) {
         this.toggleCollisionDebug();
         return;
@@ -377,10 +405,26 @@ export class Game {
         return;
       }
       if (event.code === "Escape" && this.matchActive) {
+        if (this.activeShop) {
+          this.closeShop();
+          return;
+        }
         this.pauseMatch();
         return;
       }
       if (!this.matchActive) return;
+      if (event.code === "KeyE" && !event.repeat) {
+        if (this.activeShop) {
+          this.closeShop();
+        } else {
+          this.openNearbyShop();
+        }
+        return;
+      }
+      if (event.code === "KeyV" && !event.repeat) {
+        this.useKnife(performance.now());
+        return;
+      }
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyR") this.reload();
@@ -420,10 +464,24 @@ export class Game {
     };
     document.onpointerlockchange = () => {
       this.clearLookInput();
-      if (!document.pointerLockElement && this.matchActive && !this.paused) this.pauseMatch();
+      if (
+        !document.pointerLockElement
+        && this.matchActive
+        && !this.paused
+        && !this.activeShop
+      ) {
+        this.pauseMatch();
+      }
     };
     this.canvas.onclick = () => {
-      if (this.matchActive && !this.paused && !document.pointerLockElement) this.lockPointer();
+      if (
+        this.matchActive
+        && !this.paused
+        && !this.activeShop
+        && !document.pointerLockElement
+      ) {
+        this.lockPointer();
+      }
     };
   }
 
@@ -435,6 +493,7 @@ export class Game {
     this.runElapsedSeconds += deltaSeconds;
     this.updateCameraLook(deltaSeconds);
     this.movePlayer(deltaSeconds);
+    this.updateShopAvailability();
     this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
 
@@ -508,7 +567,7 @@ export class Game {
     this.mouseDown = false;
     this.cancelAim();
     this.clearMovementInput();
-    this.playerHealth = GAME_CONFIG.player.health;
+    this.playerHealth = this.shopState.maximumHealth;
     this.weapon.refill();
     this.regenerationActive = false;
     this.playerDamagedAt = -Infinity;
@@ -529,7 +588,10 @@ export class Game {
       wave: wave.number,
       totalWaves: undefined,
       health: this.playerHealth,
+      maximumHealth: this.shopState.maximumHealth,
       magazine: this.weapon.magazine,
+      magazineSize: currentWeaponStats(this.shopState).magazineSize,
+      weaponName: WEAPON_DEFINITIONS[this.shopState.selectedWeapon].displayName,
       enemiesAlive: transitioning ? 0 : (this.botManager?.alive ?? 0),
       enemiesRemaining: transitioning
         ? wave.totalEnemies
@@ -614,7 +676,7 @@ export class Game {
       left: this.keys.has("KeyA"),
       right: this.keys.has("KeyD"),
       jumpPressed: this.jumpQueued,
-    }, deltaSeconds);
+    }, deltaSeconds, movementSpeedMultiplier(this.shopState));
     this.jumpQueued = false;
 
     if (!snapshot) {
@@ -650,6 +712,201 @@ export class Game {
   private clearMovementInput() {
     this.keys.clear();
     this.jumpQueued = false;
+  }
+
+  private updateShopAvailability() {
+    const shop = getShopAtPosition(this.camera.position);
+    this.nearbyShop = shop;
+
+    if (this.activeShop && shop !== this.activeShop) {
+      this.closeShop();
+      this.feedback = "Shop closed — you left the safe zone";
+    }
+
+    this.ui.setShopPrompt(
+      !this.activeShop && shop
+        ? `Press E to open ${SHOP_NAMES[shop]}`
+        : undefined,
+    );
+  }
+
+  private openNearbyShop() {
+    if (!this.nearbyShop || this.paused) return;
+    this.activeShop = this.nearbyShop;
+    this.mouseDown = false;
+    this.cancelAim();
+    this.clearLookInput();
+    document.exitPointerLock();
+    this.renderActiveShop();
+  }
+
+  private closeShop() {
+    this.activeShop = undefined;
+    this.ui.hideShop();
+    this.updateShopAvailability();
+  }
+
+  private renderActiveShop() {
+    if (!this.activeShop) return;
+    this.ui.showShop(
+      this.createShopMenu(this.activeShop),
+      {
+        onPurchase: (id) => this.purchaseShopUpgrade(id),
+        onClose: () => this.closeShop(),
+      },
+    );
+  }
+
+  private purchaseShopUpgrade(id: string) {
+    if (
+      !this.activeShop
+      || getShopAtPosition(this.camera.position) !== this.activeShop
+      || !isShopPurchaseId(id)
+    ) {
+      return;
+    }
+
+    const previousMaximumHealth = this.shopState.maximumHealth;
+    this.shopState = applyShopPurchase(this.shopState, id);
+    const healthIncrease = (
+      this.shopState.maximumHealth - previousMaximumHealth
+    );
+    if (healthIncrease > 0) {
+      this.playerHealth = Math.min(
+        this.shopState.maximumHealth,
+        this.playerHealth + healthIncrease,
+      );
+    }
+    this.syncWeaponStats(id.startsWith("weapon-"));
+    this.feedback = "Free upgrade applied";
+    this.renderActiveShop();
+    this.updateHud();
+  }
+
+  private syncWeaponStats(refill: boolean) {
+    const stats = currentWeaponStats(this.shopState);
+    this.weapon.configure(stats.magazineSize, stats.reloadMs, refill);
+  }
+
+  private createShopMenu(shop: ShopKind): ShopMenuData {
+    const weaponStats = currentWeaponStats(this.shopState);
+    const movementMultiplier = movementSpeedMultiplier(this.shopState);
+
+    if (shop === "movement") {
+      const currentSpeed = (
+        GAME_CONFIG.player.forwardSpeed * movementMultiplier
+      ).toFixed(2);
+      return {
+        title: SHOP_NAMES.movement,
+        summary: "Increase all ground movement speeds for this run.",
+        rows: [
+          {
+            id: "movement-5",
+            label: "Small speed increase",
+            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
+            addition: "+5%",
+          },
+          {
+            id: "movement-10",
+            label: "Medium speed increase",
+            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
+            addition: "+10%",
+          },
+          {
+            id: "movement-20",
+            label: "Large speed increase",
+            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
+            addition: "+20%",
+          },
+        ],
+      };
+    }
+
+    if (shop === "health") {
+      const current = (
+        `${Math.round(this.playerHealth)} current / `
+        + `${Math.round(this.shopState.maximumHealth)} maximum`
+      );
+      return {
+        title: SHOP_NAMES.health,
+        summary: "Increase maximum health and immediately gain the same HP.",
+        rows: [
+          {
+            id: "health-10",
+            label: "Health reinforcement",
+            current,
+            addition: "+10 HP",
+          },
+          {
+            id: "health-25",
+            label: "Health plating",
+            current,
+            addition: "+25 HP",
+          },
+          {
+            id: "health-50",
+            label: "Heavy health plating",
+            current,
+            addition: "+50 HP",
+          },
+        ],
+      };
+    }
+
+    if (shop === "weapon") {
+      return {
+        title: SHOP_NAMES.weapon,
+        summary: "Select a primary weapon. The knife remains your secondary.",
+        rows: (
+          Object.entries(WEAPON_DEFINITIONS) as Array<
+            [keyof typeof WEAPON_DEFINITIONS, (typeof WEAPON_DEFINITIONS)[keyof typeof WEAPON_DEFINITIONS]]
+          >
+        ).map(([kind, weapon]) => ({
+          id: `weapon-${kind}`,
+          label: weapon.displayName,
+          current: (
+            `${weapon.bodyDamage + this.shopState.gunDamageBonus} damage · `
+            + `${weapon.magazineSize + this.shopState.magazineBonus} rounds`
+          ),
+          addition: "Select",
+          selected: this.shopState.selectedWeapon === kind,
+        })),
+      };
+    }
+
+    return {
+      title: SHOP_NAMES.utility,
+      summary: "Apply repeatable combat upgrades to every selected loadout.",
+      rows: [
+        {
+          id: "utility-damage",
+          label: "Gun damage",
+          current: `${weaponStats.bodyDamage} body damage`,
+          addition: "+5 damage",
+        },
+        {
+          id: "utility-reload",
+          label: "Reload speed",
+          current: (
+            `+${this.shopState.reloadSpeedBonusPercent}% · `
+            + `${Math.round(weaponStats.reloadMs)} ms reload`
+          ),
+          addition: "+10% speed",
+        },
+        {
+          id: "utility-magazine",
+          label: "Magazine size",
+          current: `${weaponStats.magazineSize} rounds`,
+          addition: "+5 rounds",
+        },
+        {
+          id: "utility-knife",
+          label: "Knife damage",
+          current: `${this.shopState.knifeDamage} damage`,
+          addition: "+10 damage",
+        },
+      ],
+    };
   }
 
   private updateCameraLook(deltaSeconds: number) {
@@ -1351,6 +1608,7 @@ export class Game {
 
   private shoot(now: number) {
     if (this.phase !== "active") return;
+    if (this.activeShop) return;
     if (isInsideSafeZone(this.camera.position)) {
       this.feedback = "SAFE ZONE — weapons disabled";
       return;
@@ -1360,7 +1618,8 @@ export class Game {
       this.reload();
       return;
     }
-    if (!this.weapon.canFire(now)) return;
+    const weaponStats = currentWeaponStats(this.shopState);
+    if (!this.weapon.canFire(now, weaponStats.roundsPerMinute)) return;
     this.weapon.fire(now);
     this.shotsFired += 1;
     this.botManager?.reportPlayerGunshot(this.camera.position, now);
@@ -1369,10 +1628,14 @@ export class Game {
     this.camera.rotation.x -= GAME_CONFIG.weapon.recoilPerShot;
     this.flashMuzzle();
     const direction = this.camera.getDirection(Vector3.Forward());
-    const spread = GAME_CONFIG.weapon.hipSpread + this.recoil * 0.18;
+    const spread = weaponStats.spread + this.recoil * 0.18;
     direction.x += (Math.random() - 0.5) * spread;
     direction.y += (Math.random() - 0.5) * spread;
-    const ray = new Ray(this.camera.position, direction.normalize(), GAME_CONFIG.weapon.range);
+    const ray = new Ray(
+      this.camera.position,
+      direction.normalize(),
+      weaponStats.range,
+    );
     const hit = this.scene.pickWithRay(ray, (mesh) => (
       this.botManager?.getBotByMesh(mesh) !== undefined
       || this.cover.some((wall) => wall === mesh)
@@ -1383,8 +1646,8 @@ export class Game {
       this.shotsHit += 1;
       const headshot = hit?.pickedMesh?.metadata?.hitZone === "head";
       const damage = headshot
-        ? GAME_CONFIG.weapon.headshotDamage
-        : GAME_CONFIG.weapon.bodyDamage;
+        ? weaponStats.headshotDamage
+        : weaponStats.bodyDamage;
       const defeated = this.botManager?.damageBot(
         bot,
         damage,
@@ -1431,7 +1694,49 @@ export class Game {
     }, 220);
   }
 
+  private useKnife(now: number) {
+    if (
+      this.phase !== "active"
+      || this.activeShop
+      || isInsideSafeZone(this.camera.position)
+      || now - this.lastKnifeAt < KNIFE_COOLDOWN_MS
+    ) {
+      if (isInsideSafeZone(this.camera.position)) {
+        this.feedback = "SAFE ZONE — weapons disabled";
+      }
+      return;
+    }
+
+    this.lastKnifeAt = now;
+    const direction = this.camera.getDirection(Vector3.Forward()).normalize();
+    const hit = this.scene.pickWithRay(
+      new Ray(this.camera.position, direction, KNIFE_RANGE),
+      (mesh) => (
+        this.botManager?.getBotByMesh(mesh) !== undefined
+        || this.cover.includes(mesh)
+      ),
+    );
+    const bot = hit?.pickedMesh
+      ? this.botManager?.getBotByMesh(hit.pickedMesh)
+      : undefined;
+    if (!bot) {
+      this.feedback = "Knife swing";
+      return;
+    }
+
+    const defeated = this.botManager?.damageBot(
+      bot,
+      this.shopState.knifeDamage,
+      now,
+    ) ?? false;
+    this.audio.play("hit", bot.mesh.position);
+    this.feedback = defeated
+      ? `Knife elimination — ${this.botManager?.remaining ?? 0} remaining`
+      : `Knife hit · ${this.shopState.knifeDamage} damage`;
+  }
+
   private reload() {
+    if (this.activeShop || isInsideSafeZone(this.camera.position)) return;
     if (this.weapon.reload(
       () => {
         this.feedback = "Reloaded";
@@ -1449,7 +1754,7 @@ export class Game {
       !this.matchActive
       || this.phase !== "active"
       || this.playerHealth <= 0
-      || this.playerHealth >= GAME_CONFIG.player.health
+      || this.playerHealth >= this.shopState.maximumHealth
       || now - this.playerDamagedAt
         < createWaveConfig(this.waveIndex + 1).playerRegenerationDelayMs
     ) {
@@ -1461,7 +1766,10 @@ export class Game {
       this.feedback = "Regenerating";
       this.audio.play("regenerate");
     }
-    this.playerHealth = Math.min(GAME_CONFIG.player.health, this.playerHealth + GAME_CONFIG.regeneration.healthPerSecond * dt);
+    this.playerHealth = Math.min(
+      this.shopState.maximumHealth,
+      this.playerHealth + GAME_CONFIG.regeneration.healthPerSecond * dt,
+    );
   }
 
   private damagePlayer(amount: number, now: number) {

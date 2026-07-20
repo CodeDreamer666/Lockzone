@@ -39,7 +39,11 @@ export const SAFE_ZONES: readonly SafeZoneDefinition[] = [
 ] as const;
 
 export function isInsideSafeZone(position: HorizontalPosition) {
-  return SAFE_ZONES.some((zone) => {
+  return getSafeZoneAt(position) !== undefined;
+}
+
+export function getSafeZoneAt(position: HorizontalPosition) {
+  return SAFE_ZONES.find((zone) => {
     const halfSize = zone.size / 2;
     return (
       Math.abs(position.x - zone.center.x) <= halfSize
