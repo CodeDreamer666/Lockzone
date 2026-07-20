@@ -179,7 +179,6 @@ function createDevelopmentZones(
     walkableSurfaces,
     materials,
   );
-  createBotSpawnMarkers(decoration, materials);
 }
 
 function createCargoYardZone(
@@ -728,33 +727,6 @@ function createWalkableRamp(
   };
   cover.push(ramp);
   walkableSurfaces.push(ramp);
-}
-
-function createBotSpawnMarkers(
-  decoration: DecorationBuilder,
-  materials: ArenaMaterials,
-) {
-  const positions = [
-    new Vector3(-10, 0, -31),
-    new Vector3(-31, 0, -10),
-    new Vector3(10, 0, -31),
-    new Vector3(31, 0, -10),
-    new Vector3(-10, 0, 31),
-    new Vector3(-31, 0, 10),
-    new Vector3(10, 0, 31),
-    new Vector3(36, 0, 10),
-  ];
-  positions.forEach((position, index) => {
-    const quadrant = Math.floor(index / 2) + 1;
-    createWarningSign(
-      decoration,
-      materials,
-      "BOT SPAWN",
-      position.add(new Vector3(0, 1.05, -1.42)),
-      2.55,
-      `zone ${quadrant} bot spawn label ${index % 2 + 1}`,
-    );
-  });
 }
 
 function createPerimeter(
