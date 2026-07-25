@@ -117,6 +117,26 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 .hud-ammo { align-items: flex-end; }
 .hud-enemies { display: flex; gap: clamp(1.3rem, 5vw, 4.5rem); }
 
+.hud-coins {
+  align-items: flex-end;
+  color: #f4e4ac;
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  right: 2rem;
+  text-shadow: 0 2px 5px #000;
+  top: 1.45rem;
+}
+
+.hud-coins span {
+  color: #bdb9ad;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.hud-coins b { font-size: 1.35rem; }
+
 .crosshair { height: 18px; left: 50%; position: absolute; top: 50%; transform: translate(-50%, -50%); width: 18px; }
 .crosshair span { background: rgba(255, 251, 239, 0.92); box-shadow: 0 1px 3px #000; position: absolute; }
 .crosshair span:nth-child(1), .crosshair span:nth-child(2) { height: 1px; top: 8px; width: 5px; }
@@ -159,6 +179,53 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 .is-aiming .crosshair { opacity: 0; }
 
 #feedback { bottom: 6rem; color: #ede7d8; font-size: 0.72rem; font-weight: 800; left: 50%; letter-spacing: 0.08em; position: absolute; text-shadow: 0 2px 6px #000; transform: translateX(-50%); }
+
+.milestone-notice {
+  background: rgba(8, 14, 14, 0.82);
+  border-left: 2px solid rgba(215, 185, 104, 0.82);
+  color: #e5dcc1;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  max-width: min(280px, calc(100vw - 2rem));
+  padding: 0.65rem 0.8rem;
+  position: absolute;
+  right: 2rem;
+  text-transform: uppercase;
+  top: 5rem;
+}
+
+.milestone-notice[hidden] { display: none; }
+
+#enemy-indicators {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.enemy-indicator {
+  align-items: center;
+  color: #f2d88e;
+  display: flex;
+  filter: drop-shadow(0 2px 4px #000);
+  flex-direction: column;
+  font-size: 0.56rem;
+  gap: 0.08rem;
+  letter-spacing: 0.05em;
+  position: absolute;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%);
+}
+
+.enemy-indicator span {
+  color: rgba(255, 114, 78, 0.9);
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.enemy-indicator b { font-size: 0.56rem; }
+.enemy-indicator small { color: #d2cec2; font-size: 0.52rem; }
 
 .shop-prompt {
   background: rgba(6, 18, 17, 0.9);
@@ -211,16 +278,32 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 .shop-header p:not(.eyebrow) { color: #aebdb7; line-height: 1.5; margin-bottom: 0; }
 .shop-close { min-width: auto; padding: 0.65rem 0.8rem; }
 
-.shop-free-notice {
+.shop-balance {
+  align-items: center;
   border-bottom: 1px solid rgba(72, 245, 197, 0.18);
   border-top: 1px solid rgba(72, 245, 197, 0.18);
+  display: flex;
+  justify-content: space-between;
+  margin: 1.25rem 0 0;
+  padding: 0.75rem 0;
+}
+
+.shop-balance span,
+.shop-message {
   color: #87e8cc;
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.08em;
-  margin: 1.25rem 0;
-  padding: 0.75rem 0;
   text-transform: uppercase;
+}
+
+.shop-balance strong { color: #f4e4ac; }
+
+.shop-message {
+  color: #aebdb7;
+  margin: 0;
+  min-height: 2.8rem;
+  padding: 0.75rem 0;
 }
 
 .shop-options { display: grid; gap: 0.65rem; }
@@ -398,6 +481,8 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
   .hud-readout { min-width: auto; }
   .hud-readout b { font-size: 1.25rem; }
   .hud-enemies { gap: 1rem; }
+  .hud-coins { right: 1rem; top: 1rem; }
+  .milestone-notice { right: 1rem; top: 4.5rem; }
   .result { max-height: calc(100vh - 2rem); overflow-y: auto; padding: 1.75rem; }
   .result-actions { flex-direction: column; }
   .shop-header,

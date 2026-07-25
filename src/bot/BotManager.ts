@@ -6,6 +6,8 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import {
+  getEnemyTypeForSpawn,
+  selectAttackerIds,
   type WaveConfig,
 } from "../game/gameConfig";
 import { isInsideSafeZone } from "../map/safeZones";
@@ -31,6 +33,7 @@ export class BotManager {
   private elevatedSpawnedCount = 0;
   private nextBotId = 0;
   private waveActive = false;
+  private activeShooterCount = 0;
 
   constructor(
     private readonly scene: Scene,
@@ -61,6 +64,10 @@ export class BotManager {
     return this.elevatedSpawnedCount;
   }
 
+  get activeShooters() {
+    return this.activeShooterCount;
+  }
+
   get waitingToSpawn() {
     return Math.max(
       0,
@@ -88,6 +95,23 @@ export class BotManager {
       .map((bot) => bot.debugSummary);
   }
 
+  get remainingEnemyLocations() {
+    if (
+      !this.waveActive
+      || this.remaining === 0
+      || this.remaining > 5
+    ) {
+      return [];
+    }
+    return this.bots
+      .filter((bot) => bot.isAlive)
+      .map((bot) => ({
+        id: bot.id,
+        label: bot.locationLabel,
+        position: bot.mesh.position.clone(),
+      }));
+  }
+
   async loadModels() {
     // Tactical opponents are assembled from local Babylon primitives.
     // Keep this async boundary so a rigged model can be restored later.
@@ -103,7 +127,9 @@ export class BotManager {
     this.nextBotId = (config.number - 1) * 1000;
     this.nextSpawnAt = now;
     this.waveActive = true;
+    this.activeShooterCount = 0;
     this.lastGunshot = undefined;
+    this.activeShooterCount = 0;
     this.recentlyUsedSpawns.length = 0;
   }
 
@@ -121,13 +147,28 @@ export class BotManager {
     playerViewDirection: Vector3,
     playerTarget: Mesh,
     playerSpeed: number,
+    maximumPlayerHealth: number,
     onBotShot: (bot: BotController, origin: Vector3, direction: Vector3) => void,
-    onPlayerHit: () => void,
+    onPlayerHit: (damage: number) => void,
     onBotFootstep: (position: Vector3) => void,
   ) {
     if (!this.waveActive || !this.wave) return;
     this.removeExpiredCorpses(now);
     this.trySpawn(now, playerPosition, playerViewDirection);
+    const shooterIds = new Set(
+      selectAttackerIds(
+        this.bots.map((bot) => ({
+          id: bot.id,
+          ready: bot.wantsAttackSlot(now),
+          distanceSquared: Vector3.DistanceSquared(
+            bot.mesh.position,
+            playerPosition,
+          ),
+        })),
+        this.wave.maximumShooters,
+      ),
+    );
+    this.activeShooterCount = shooterIds.size;
     for (const bot of this.bots) {
       bot.update({
         now,
@@ -135,6 +176,8 @@ export class BotManager {
         playerPosition,
         playerTarget,
         playerSpeed,
+        maximumPlayerHealth,
+        canShoot: shooterIds.has(bot.id),
         cover: this.cover,
         ground: this.ground,
         patrolPoints: this.patrolPoints,
@@ -164,12 +207,26 @@ export class BotManager {
     return true;
   }
 
-  eliminateActiveBots(now: number) {
-    const activeBots = this.bots.filter((bot) => bot.isAlive);
+  eliminateActiveBots(now: number, maximum = Infinity) {
+    const activeBots = this.bots
+      .filter((bot) => bot.isAlive)
+      .slice(0, Math.max(0, maximum));
     activeBots.forEach((bot) => {
       this.damageBot(bot, bot.health, now);
     });
     return activeBots.length;
+  }
+
+  prepareFinalEnemiesForTest(now: number, remainingEnemies = 5) {
+    if (!this.waveActive || !this.wave) return;
+    const remaining = Math.max(
+      0,
+      Math.min(this.wave.totalEnemies, Math.floor(remainingEnemies)),
+    );
+    this.clearBots();
+    this.defeatedCount = this.wave.totalEnemies - remaining;
+    this.spawnedCount = this.defeatedCount;
+    this.nextSpawnAt = now;
   }
 
   reportPlayerGunshot(position: Vector3, time: number) {
@@ -251,8 +308,7 @@ export class BotManager {
           playerPosition,
           playerViewDirection,
         ))
-        .filter(({ position }) => this.isSpawnClear(position))
-        .filter(({ index }) => !this.recentlyUsedSpawns.includes(index));
+        .filter(({ position }) => this.isSpawnClear(position));
     if (safePool.length === 0) return undefined;
     safePool.sort(
       (left, right) => (
@@ -307,7 +363,7 @@ export class BotManager {
     }
     if (this.bots.some((bot) => (
       bot.isAlive
-      && Vector3.DistanceSquared(bot.mesh.position, spawn) < 2.25
+      && Vector3.DistanceSquared(bot.mesh.position, spawn) < 4.84
     ))) {
       return false;
     }
@@ -346,6 +402,10 @@ export class BotManager {
       groundedSpawn,
       this.nextBotId,
       this.wave,
+      getEnemyTypeForSpawn(
+        this.wave.number,
+        this.spawnedCount,
+      ),
     );
     this.bots.push(bot);
     this.nextBotId += 1;

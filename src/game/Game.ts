@@ -50,22 +50,24 @@ import {
 import { clampDeltaSeconds } from "./movementMath";
 import { PushablePropController } from "./PushablePropController";
 import {
-  applyShopPurchase,
+  awardCoins,
+  COIN_REWARDS,
   createInitialShopState,
   currentWeaponStats,
   getShopAtPosition,
+  getBotKillCoinReward,
+  getShopPrice,
   isShopPurchaseId,
   movementSpeedMultiplier,
+  purchaseShopItem,
+  RIFLE_DEFINITION,
   SHOP_NAMES,
   type RunShopState,
   type ShopKind,
   type ShopPurchaseId,
-  WEAPON_DEFINITIONS,
 } from "./shopSystem";
 
 type MatchPhase = "opening" | "active" | "transition" | "ended";
-const KNIFE_RANGE = 2.4;
-const KNIFE_COOLDOWN_MS = 520;
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -83,7 +85,8 @@ export class Game {
   private shopState: RunShopState = createInitialShopState();
   private nearbyShop?: ShopKind;
   private activeShop?: ShopKind;
-  private lastKnifeAt = -Infinity;
+  private shopMessage?: string;
+  private milestoneNoticeRemainingSeconds = 0;
   private playerDamagedAt = -Infinity;
   private regenerationActive = false;
   private remaining = 0;
@@ -128,6 +131,14 @@ export class Game {
   private readonly gameplayTestScenario = new URLSearchParams(
     window.location.search,
   ).get("gameplayTest") ?? "victory";
+  private readonly gameplayTestWave = this.gameplayTestMode
+    ? parseGameplayTestWave(
+        new URLSearchParams(window.location.search).get("testWave"),
+      )
+    : 1;
+  private readonly shopTestScenario = this.collisionDebugAvailable
+    ? new URLSearchParams(window.location.search).get("shopTest")
+    : null;
   private gameplayTestNextActionAt = 0;
   private gameplayTestActionComplete = false;
   private gameplayTestMaximumAlive: number[] = [];
@@ -164,7 +175,7 @@ export class Game {
       this.phase = this.movementTestMode ? "active" : "opening";
       this.feedback = this.movementTestMode
           ? "Movement test area — F7 shows controller diagnostics"
-          : "Prepare for Wave 1";
+          : `Prepare for Wave ${this.waveIndex + 1}`;
       this.ui.showHud();
       this.updateCollisionDebugReadout(performance.now());
       this.resetActiveContactDebug();
@@ -192,14 +203,17 @@ export class Game {
     this.playerHealth = this.shopState.maximumHealth;
     this.nearbyShop = undefined;
     this.activeShop = undefined;
-    this.lastKnifeAt = -Infinity;
+    this.shopMessage = undefined;
+    this.milestoneNoticeRemainingSeconds = 0;
     this.ui.hideShop();
     this.playerDamagedAt = -Infinity;
     this.regenerationActive = false;
     this.remaining = 0;
     this.phase = "opening";
     this.phaseRemaining = OPENING_COUNTDOWN_SECONDS;
-    this.waveIndex = 0;
+    this.waveIndex = this.gameplayTestMode
+      ? this.gameplayTestWave - 1
+      : 0;
     this.wavesCompleted = 0;
     this.totalEnemiesDefeated = 0;
     this.runElapsedSeconds = 0;
@@ -216,7 +230,7 @@ export class Game {
     this.footstepDistance = 0;
     this.currentSurface = "asphalt";
     this.keys.clear();
-    this.feedback = "Prepare for Wave 1";
+    this.feedback = `Prepare for Wave ${this.waveIndex + 1}`;
     this.mouseDown = false;
     this.recoil = 0;
     this.clearLookInput();
@@ -226,6 +240,12 @@ export class Game {
   private createScene() {
     const map = this.createEnvironmentScene(this.movementTestMode);
     this.camera = this.createCamera(map.playerSpawn);
+    if (this.shopTestScenario) {
+      this.camera.position.set(-16, 1.7, -13.9);
+      if (this.shopTestScenario === "funded") {
+        this.shopState = awardCoins(this.shopState, 500);
+      }
+    }
     this.playerController = new PlayerController(
       this.scene,
       this.camera,
@@ -395,7 +415,7 @@ export class Game {
 
   private bindControls() {
     window.onkeydown = (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "KeyE", "KeyV", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "KeyE", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
       if (event.code === "F3" && this.collisionDebugAvailable) {
         this.toggleCollisionDebug();
         return;
@@ -419,10 +439,6 @@ export class Game {
         } else {
           this.openNearbyShop();
         }
-        return;
-      }
-      if (event.code === "KeyV" && !event.repeat) {
-        this.useKnife(performance.now());
         return;
       }
       this.keys.add(event.code);
@@ -499,6 +515,10 @@ export class Game {
 
     if (this.phase === "active") {
       this.remaining += deltaSeconds;
+      this.milestoneNoticeRemainingSeconds = Math.max(
+        0,
+        this.milestoneNoticeRemainingSeconds - deltaSeconds,
+      );
       this.updatePlayerRegeneration(now, deltaSeconds);
       if (this.mouseDown) this.shoot(now);
       this.botManager?.update(
@@ -508,15 +528,16 @@ export class Game {
         this.camera.getDirection(Vector3.Forward()),
         this.playerTarget,
         this.playerController.getSnapshot().velocityAfterCollision.length(),
+        this.shopState.maximumHealth,
         (bot) => this.audio.play("enemyShot", bot.mesh.position),
-        () => {
+        (damage) => {
           if (
             this.gameplayTestMode
             && this.gameplayTestScenario === "observe"
           ) {
             return;
           }
-          this.damagePlayer(GAME_CONFIG.bot.shotDamage, now);
+          this.damagePlayer(damage, now);
         },
         (position) => this.audio.playBotFootstep(position),
       );
@@ -554,6 +575,9 @@ export class Game {
     const wave = createWaveConfig(this.waveIndex + 1);
     this.phase = "active";
     this.remaining = 0;
+    this.milestoneNoticeRemainingSeconds = wave.milestoneNotice
+      ? 4.5
+      : 0;
     this.feedback = `${wave.name} engaged · ${wave.totalEnemies} enemies`;
     this.botManager?.startWave(wave, now);
   }
@@ -562,6 +586,7 @@ export class Game {
     if (this.phase !== "active") return;
     this.gameplayTestElevatedSpawns[this.waveIndex] = 0;
     this.wavesCompleted += 1;
+    this.shopState = awardCoins(this.shopState, COIN_REWARDS.waveComplete);
     this.botManager?.stopWave();
     this.clearCombatEffects();
     this.mouseDown = false;
@@ -571,11 +596,15 @@ export class Game {
     this.weapon.refill();
     this.regenerationActive = false;
     this.playerDamagedAt = -Infinity;
+    this.milestoneNoticeRemainingSeconds = 0;
     this.waveIndex += 1;
     this.phase = "transition";
     this.phaseRemaining = WAVE_TRANSITION_SECONDS;
     this.remaining = 0;
-    this.feedback = "Wave Complete · Health and magazine restored";
+    this.feedback = (
+      `Wave Complete · +${COIN_REWARDS.waveComplete} coins · `
+      + "Health and magazine restored"
+    );
   }
 
   private updateHud() {
@@ -586,17 +615,21 @@ export class Game {
     );
     this.ui.update({
       wave: wave.number,
-      totalWaves: undefined,
       health: this.playerHealth,
       maximumHealth: this.shopState.maximumHealth,
+      coins: this.shopState.coins,
       magazine: this.weapon.magazine,
       magazineSize: currentWeaponStats(this.shopState).magazineSize,
-      weaponName: WEAPON_DEFINITIONS[this.shopState.selectedWeapon].displayName,
+      weaponName: RIFLE_DEFINITION.displayName,
       enemiesAlive: transitioning ? 0 : (this.botManager?.alive ?? 0),
       enemiesRemaining: transitioning
         ? wave.totalEnemies
         : (this.botManager?.remaining ?? 0),
       remaining: this.remaining,
+      enemyIndicators: this.createEnemyIndicators(),
+      milestoneNotice: this.milestoneNoticeRemainingSeconds > 0
+        ? wave.milestoneNotice
+        : undefined,
       message: this.movementTestMode
         ? "Movement test area — F7 shows controller diagnostics"
         : this.weapon.isReloading
@@ -604,7 +637,7 @@ export class Game {
           : this.feedback,
       announcement: this.phase === "opening"
         ? {
-            title: "WAVE 1",
+            title: `WAVE ${wave.number}`,
             detail: `${wave.name} · ${wave.totalEnemies} enemies · Begins in ${Math.max(1, Math.ceil(this.phaseRemaining))}`,
           }
         : this.phase === "transition"
@@ -617,6 +650,64 @@ export class Game {
             }
           : undefined,
     });
+  }
+
+  private createEnemyIndicators() {
+    if (this.phase !== "active") return [];
+    const locations = this.botManager?.remainingEnemyLocations ?? [];
+    const forward = this.camera.getDirection(Vector3.Forward());
+    const right = this.camera.getDirection(Vector3.Right());
+    forward.y = 0;
+    right.y = 0;
+    forward.normalize();
+    right.normalize();
+
+    const indicators = locations.map((enemy, index) => {
+      const direction = enemy.position.subtract(this.camera.position);
+      const distance = direction.length();
+      direction.y = 0;
+      direction.normalize();
+      const forwardAmount = Vector3.Dot(forward, direction);
+      const rightAmount = Vector3.Dot(right, direction);
+      const angle = Math.atan2(rightAmount, forwardAmount);
+      return {
+        id: enemy.id,
+        label: enemy.label,
+        distance,
+        xPercent: Math.max(
+          4,
+          Math.min(
+            96,
+            50
+              + Math.sin(angle) * 43
+              + (index - (locations.length - 1) / 2) * 2.2,
+          ),
+        ),
+        yPercent: 50 - Math.cos(angle) * 38,
+        angleDegrees: angle * 180 / Math.PI,
+      };
+    });
+    for (let index = 0; index < indicators.length; index += 1) {
+      let attempts = 0;
+      while (
+        indicators.slice(0, index).some((other) => (
+          Math.abs(other.xPercent - indicators[index].xPercent) < 8
+          && Math.abs(other.yPercent - indicators[index].yPercent) < 7
+        ))
+        && attempts < indicators.length
+      ) {
+        const direction = index % 2 === 0 ? 1 : -1;
+        indicators[index].yPercent = Math.max(
+          7,
+          Math.min(
+            93,
+            indicators[index].yPercent + direction * 7,
+          ),
+        );
+        attempts += 1;
+      }
+    }
+    return indicators;
   }
 
   private runGameplayTest(now: number) {
@@ -633,6 +724,40 @@ export class Game {
       if (this.gameplayTestScenario === "healthDefeat") {
         this.gameplayTestActionComplete = true;
         this.damagePlayer(this.playerHealth, now);
+      } else if (
+        this.gameplayTestScenario === "enemyAttack"
+        && currentAlive > 0
+      ) {
+        const target = this.botManager?.bots.find((bot) => bot.isAlive);
+        if (target) {
+          target.mesh.position.set(0, 1.3, 0);
+          target.mesh.computeWorldMatrix(true);
+          this.camera.position.set(0, 1.7, 8);
+          this.camera.setTarget(target.bodyHitbox.getAbsolutePosition());
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "headshotKill"
+        && currentAlive > 0
+      ) {
+        const target = this.botManager?.bots.find((bot) => bot.isAlive);
+        if (target) {
+          const weaponStats = currentWeaponStats(this.shopState);
+          target.mesh.position.set(0, 1.3, 0);
+          target.health = weaponStats.headshotDamage;
+          target.mesh.computeWorldMatrix(true);
+          const headPosition = target.headHitbox.getAbsolutePosition();
+          this.camera.position.set(0, headPosition.y, 3);
+          this.camera.setTarget(headPosition);
+          this.shoot(now);
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "finalFive"
+        && currentAlive > 0
+      ) {
+        this.botManager?.prepareFinalEnemiesForTest(now, 5);
+        this.gameplayTestActionComplete = true;
       } else if (
         this.gameplayTestScenario === "victory"
         &&
@@ -661,6 +786,11 @@ export class Game {
       remaining: this.botManager?.remaining ?? 0,
       health: this.playerHealth,
       magazine: this.weapon.magazine,
+      framesPerSecond: this.engine.getFps(),
+      activeShooters: this.botManager?.activeShooters ?? 0,
+      shooterLimit: createWaveConfig(
+        this.waveIndex + 1,
+      ).maximumShooters,
       totalEnemiesDefeated: this.totalEnemiesDefeated,
       wavesCompleted: this.wavesCompleted,
       maximumAliveByWave: this.gameplayTestMaximumAlive,
@@ -733,6 +863,7 @@ export class Game {
   private openNearbyShop() {
     if (!this.nearbyShop || this.paused) return;
     this.activeShop = this.nearbyShop;
+    this.shopMessage = undefined;
     this.mouseDown = false;
     this.cancelAim();
     this.clearLookInput();
@@ -742,6 +873,7 @@ export class Game {
 
   private closeShop() {
     this.activeShop = undefined;
+    this.shopMessage = undefined;
     this.ui.hideShop();
     this.updateShopAvailability();
   }
@@ -767,7 +899,16 @@ export class Game {
     }
 
     const previousMaximumHealth = this.shopState.maximumHealth;
-    this.shopState = applyShopPurchase(this.shopState, id);
+    const result = purchaseShopItem(this.shopState, id);
+    if (result.status === "insufficient-funds") {
+      this.shopMessage = "Not enough coins";
+      this.feedback = "Not enough coins";
+      this.renderActiveShop();
+      this.updateHud();
+      return;
+    }
+
+    this.shopState = result.state;
     const healthIncrease = (
       this.shopState.maximumHealth - previousMaximumHealth
     );
@@ -777,8 +918,9 @@ export class Game {
         this.playerHealth + healthIncrease,
       );
     }
-    this.syncWeaponStats(id.startsWith("weapon-"));
-    this.feedback = "Free upgrade applied";
+    this.syncWeaponStats(id === "magazine-10");
+    this.shopMessage = `${result.price} coins spent`;
+    this.feedback = this.shopMessage;
     this.renderActiveShop();
     this.updateHud();
   }
@@ -791,119 +933,54 @@ export class Game {
   private createShopMenu(shop: ShopKind): ShopMenuData {
     const weaponStats = currentWeaponStats(this.shopState);
     const movementMultiplier = movementSpeedMultiplier(this.shopState);
-
-    if (shop === "movement") {
-      const currentSpeed = (
-        GAME_CONFIG.player.forwardSpeed * movementMultiplier
-      ).toFixed(2);
-      return {
-        title: SHOP_NAMES.movement,
-        summary: "Increase all ground movement speeds for this run.",
-        rows: [
-          {
-            id: "movement-5",
-            label: "Small speed increase",
-            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
-            addition: "+5%",
-          },
-          {
-            id: "movement-10",
-            label: "Medium speed increase",
-            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
-            addition: "+10%",
-          },
-          {
-            id: "movement-20",
-            label: "Large speed increase",
-            current: `${currentSpeed} m/s · +${this.shopState.movementBonusPercent}%`,
-            addition: "+20%",
-          },
-        ],
-      };
-    }
-
-    if (shop === "health") {
-      const current = (
-        `${Math.round(this.playerHealth)} current / `
-        + `${Math.round(this.shopState.maximumHealth)} maximum`
-      );
-      return {
-        title: SHOP_NAMES.health,
-        summary: "Increase maximum health and immediately gain the same HP.",
-        rows: [
-          {
-            id: "health-10",
-            label: "Health reinforcement",
-            current,
-            addition: "+10 HP",
-          },
-          {
-            id: "health-25",
-            label: "Health plating",
-            current,
-            addition: "+25 HP",
-          },
-          {
-            id: "health-50",
-            label: "Heavy health plating",
-            current,
-            addition: "+50 HP",
-          },
-        ],
-      };
-    }
-
-    if (shop === "weapon") {
-      return {
-        title: SHOP_NAMES.weapon,
-        summary: "Select a primary weapon. The knife remains your secondary.",
-        rows: (
-          Object.entries(WEAPON_DEFINITIONS) as Array<
-            [keyof typeof WEAPON_DEFINITIONS, (typeof WEAPON_DEFINITIONS)[keyof typeof WEAPON_DEFINITIONS]]
-          >
-        ).map(([kind, weapon]) => ({
-          id: `weapon-${kind}`,
-          label: weapon.displayName,
-          current: (
-            `${weapon.bodyDamage + this.shopState.gunDamageBonus} damage · `
-            + `${weapon.magazineSize + this.shopState.magazineBonus} rounds`
-          ),
-          addition: "Select",
-          selected: this.shopState.selectedWeapon === kind,
-        })),
-      };
-    }
-
+    const currentSpeed = (
+      GAME_CONFIG.player.forwardSpeed * movementMultiplier
+    ).toFixed(2);
     return {
-      title: SHOP_NAMES.utility,
-      summary: "Apply repeatable combat upgrades to every selected loadout.",
+      title: SHOP_NAMES[shop],
+      summary: "Four repeatable upgrades for the current run.",
+      coins: this.shopState.coins,
+      message: this.shopMessage,
       rows: [
         {
-          id: "utility-damage",
-          label: "Gun damage",
-          current: `${weaponStats.bodyDamage} body damage`,
-          addition: "+5 damage",
-        },
-        {
-          id: "utility-reload",
-          label: "Reload speed",
+          id: "movement-10",
+          label: "Movement speed",
           current: (
-            `+${this.shopState.reloadSpeedBonusPercent}% · `
-            + `${Math.round(weaponStats.reloadMs)} ms reload`
+            `${currentSpeed} m/s · `
+            + `+${this.shopState.movementBonusPercent}%`
           ),
-          addition: "+10% speed",
+          addition: "+10%",
+          price: getShopPrice(this.shopState, "movement-10"),
         },
         {
-          id: "utility-magazine",
+          id: "health-10",
+          label: "Maximum health",
+          current: (
+            `${Math.round(this.playerHealth)} current / `
+            + `${Math.round(this.shopState.maximumHealth)} maximum`
+          ),
+          addition: "+10%",
+          price: getShopPrice(this.shopState, "health-10"),
+        },
+        {
+          id: "rifle-damage-10",
+          label: "Rifle damage",
+          current: (
+            `${weaponStats.bodyDamage.toFixed(1)} body · `
+            + `+${this.shopState.rifleDamageBonusPercent}%`
+          ),
+          addition: "+10%",
+          price: getShopPrice(this.shopState, "rifle-damage-10"),
+        },
+        {
+          id: "magazine-10",
           label: "Magazine size",
-          current: `${weaponStats.magazineSize} rounds`,
-          addition: "+5 rounds",
-        },
-        {
-          id: "utility-knife",
-          label: "Knife damage",
-          current: `${this.shopState.knifeDamage} damage`,
-          addition: "+10 damage",
+          current: (
+            `${weaponStats.magazineSize} rounds · `
+            + `+${this.shopState.magazineBonusPercent}%`
+          ),
+          addition: "+10%",
+          price: getShopPrice(this.shopState, "magazine-10"),
         },
       ],
     };
@@ -931,7 +1008,10 @@ export class Game {
   }
 
   private updateAim(deltaSeconds: number) {
-    const target = this.aimDown && this.phase === "active" ? 1 : 0;
+    const target = (
+      this.aimDown
+      && this.phase === "active"
+    ) ? 1 : 0;
     this.aimBlend += (target - this.aimBlend) * Math.min(1, deltaSeconds * 8);
     const normalFov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
     const aimedFov = 42 * Math.PI / 180;
@@ -1151,17 +1231,16 @@ export class Game {
     });
 
     const locations = [
-      { name: "cargo development spawn", x: -20, y: 2, z: -34 },
-      { name: "cargo central route", x: -22, y: 2, z: -20 },
-      { name: "cargo north route", x: -18, y: 2, z: -5 },
-      { name: "industrial south route", x: 5, y: 2, z: -35 },
-      { name: "industrial center route", x: 21, y: 2, z: -25 },
-      { name: "industrial north route", x: 36, y: 2, z: -7 },
-      { name: "warehouse south corridor", x: -20, y: 2, z: 4 },
-      { name: "warehouse center corridor", x: -22, y: 2, z: 16 },
-      { name: "warehouse north corridor", x: -18, y: 2, z: 31 },
-      { name: "marksman open lane", x: 21, y: 2, z: 8 },
-      { name: "marksman west tower ramp", x: 10, y: 2, z: 10 },
+      { name: "safe-zone exit", x: -16, y: 2, z: -13.9 },
+      { name: "cargo west lane", x: -16, y: 2, z: 0 },
+      { name: "cargo south lane", x: -8, y: 2, z: -7 },
+      { name: "cargo north lane", x: -8, y: 2, z: 15 },
+      { name: "central combat lane", x: 1, y: 2, z: -7 },
+      { name: "tower south approach", x: 8, y: 2, z: -4 },
+      { name: "tower east approach", x: 15, y: 2, z: 8 },
+      { name: "bridge sightline", x: 1, y: 2, z: 8 },
+      { name: "north entry lane", x: 0, y: 2, z: 16 },
+      { name: "east entry lane", x: 16, y: 2, z: 0 },
     ];
     const directions = [
       {
@@ -1260,28 +1339,16 @@ export class Game {
     };
     const elevationRoutes = [
       runElevationRoute(
-        "marksman west platform ramp",
-        new Vector3(10, GAME_CONFIG.player.standingHeight, 9.2),
+        "south tower broad ramp",
+        new Vector3(8, GAME_CONFIG.player.standingHeight, -3.7),
         0,
-        [{ frames: 105, input: forward }],
+        [{ frames: 90, input: forward }],
       ),
       runElevationRoute(
-        "marksman high east platform ramp",
-        new Vector3(29, GAME_CONFIG.player.standingHeight, 0.8),
-        0,
-        [{ frames: 150, input: forward }],
-      ),
-      runElevationRoute(
-        "marksman north platform ramp",
-        new Vector3(18, GAME_CONFIG.player.standingHeight, 23),
-        0,
-        [{ frames: 100, input: forward }],
-      ),
-      runElevationRoute(
-        "marksman northeast platform ramp",
-        new Vector3(27, GAME_CONFIG.player.standingHeight, 17.5),
-        0,
-        [{ frames: 135, input: forward }],
+        "north tower east ramp",
+        new Vector3(17.2, GAME_CONFIG.player.standingHeight, 13),
+        -Math.PI / 2,
+        [{ frames: 90, input: forward }],
       ),
     ];
     const runSurfaceJump = (
@@ -1332,27 +1399,17 @@ export class Game {
     const surfaceJumps = [
       runSurfaceJump(
         "asphalt ground",
-        new Vector3(-20, GAME_CONFIG.player.standingHeight, -34),
+        new Vector3(-16, GAME_CONFIG.player.standingHeight, -13.9),
         0.9,
       ),
       runSurfaceJump(
-        "marksman west platform",
-        new Vector3(10, 6.125, 22),
+        "south tower platform",
+        new Vector3(8, 4.925, 5),
         0.9,
       ),
       runSurfaceJump(
-        "marksman high east platform",
-        new Vector3(29, 8.125, 18),
-        0.9,
-      ),
-      runSurfaceJump(
-        "marksman north platform",
-        new Vector3(18, 5.125, 34),
-        0.9,
-      ),
-      runSurfaceJump(
-        "marksman northeast platform",
-        new Vector3(27, 7.125, 32),
+        "north tower platform",
+        new Vector3(8, 4.925, 13),
         0.9,
       ),
     ];
@@ -1389,7 +1446,11 @@ export class Game {
     document.documentElement.dataset.mapMovementEvidence = JSON.stringify(evidence);
     console.info("Neon Duel complete-map movement smoke verification", evidence);
 
-    this.camera.position.set(-20, GAME_CONFIG.player.standingHeight, -34);
+    this.camera.position.set(
+      -16,
+      GAME_CONFIG.player.standingHeight,
+      -13.9,
+    );
     this.camera.rotation.set(0, 0, 0);
     this.playerController.reset();
   }
@@ -1645,20 +1706,26 @@ export class Game {
     if (bot) {
       this.shotsHit += 1;
       const headshot = hit?.pickedMesh?.metadata?.hitZone === "head";
-      const damage = headshot
+      const configuredDamage = headshot
         ? weaponStats.headshotDamage
         : weaponStats.bodyDamage;
+      const damage = bot.adjustIncomingPlayerDamage(configuredDamage);
       const defeated = this.botManager?.damageBot(
         bot,
         damage,
         now,
       ) ?? false;
       this.audio.play("hit", bot.mesh.position);
-      this.feedback = defeated
-        ? `${headshot ? "HEADSHOT — " : ""}Enemy eliminated — ${this.botManager?.remaining ?? 0} remaining`
-        : headshot
-          ? "HEADSHOT"
-          : "Hit confirmed";
+      if (defeated) {
+        const coinReward = getBotKillCoinReward(headshot);
+        this.shopState = awardCoins(this.shopState, coinReward);
+        this.feedback = (
+          `${headshot ? "HEADSHOT — " : ""}Enemy eliminated · `
+          + `+${coinReward} coins · ${this.botManager?.remaining ?? 0} remaining`
+        );
+      } else {
+        this.feedback = headshot ? "HEADSHOT" : "Hit confirmed";
+      }
       this.impact(hit!.pickedPoint!, true, "concrete");
     } else if (hit?.pickedPoint) {
       const bulletMaterial = bulletMaterialOf(hit.pickedMesh ?? undefined);
@@ -1694,49 +1761,11 @@ export class Game {
     }, 220);
   }
 
-  private useKnife(now: number) {
-    if (
-      this.phase !== "active"
-      || this.activeShop
-      || isInsideSafeZone(this.camera.position)
-      || now - this.lastKnifeAt < KNIFE_COOLDOWN_MS
-    ) {
-      if (isInsideSafeZone(this.camera.position)) {
-        this.feedback = "SAFE ZONE — weapons disabled";
-      }
-      return;
-    }
-
-    this.lastKnifeAt = now;
-    const direction = this.camera.getDirection(Vector3.Forward()).normalize();
-    const hit = this.scene.pickWithRay(
-      new Ray(this.camera.position, direction, KNIFE_RANGE),
-      (mesh) => (
-        this.botManager?.getBotByMesh(mesh) !== undefined
-        || this.cover.includes(mesh)
-      ),
-    );
-    const bot = hit?.pickedMesh
-      ? this.botManager?.getBotByMesh(hit.pickedMesh)
-      : undefined;
-    if (!bot) {
-      this.feedback = "Knife swing";
-      return;
-    }
-
-    const defeated = this.botManager?.damageBot(
-      bot,
-      this.shopState.knifeDamage,
-      now,
-    ) ?? false;
-    this.audio.play("hit", bot.mesh.position);
-    this.feedback = defeated
-      ? `Knife elimination — ${this.botManager?.remaining ?? 0} remaining`
-      : `Knife hit · ${this.shopState.knifeDamage} damage`;
-  }
-
   private reload() {
-    if (this.activeShop || isInsideSafeZone(this.camera.position)) return;
+    if (
+      this.activeShop
+      || isInsideSafeZone(this.camera.position)
+    ) return;
     if (this.weapon.reload(
       () => {
         this.feedback = "Reloaded";
@@ -1807,7 +1836,6 @@ export class Game {
       {
         result,
         wavesCompleted: this.wavesCompleted,
-        totalWaves: this.wavesCompleted,
         enemiesDefeated: this.totalEnemiesDefeated,
         completionSeconds: this.runElapsedSeconds,
         shotsFired: this.shotsFired,
@@ -1839,6 +1867,13 @@ function surfaceTypeOf(mesh?: AbstractMesh): SurfaceType {
 function bulletMaterialOf(mesh?: AbstractMesh): BulletMaterial {
   const material = mesh?.metadata?.bulletMaterial;
   return material === "metal" || material === "wood" ? material : "concrete";
+}
+
+function parseGameplayTestWave(value: string | null) {
+  const wave = Number(value);
+  return Number.isFinite(wave)
+    ? Math.max(1, Math.min(500, Math.floor(wave)))
+    : 1;
 }
 
 function formatVector(vector: Vector3) {

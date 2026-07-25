@@ -7,6 +7,7 @@ import {
   TransformNode,
   Vector3,
 } from "@babylonjs/core";
+import type { EnemyArchetype } from "../game/gameConfig";
 
 export class BotVisual {
   private readonly root: TransformNode;
@@ -18,19 +19,36 @@ export class BotVisual {
     scene: Scene,
     id: number,
     collisionMesh: Mesh,
+    archetype: EnemyArchetype,
   ) {
     this.root = new TransformNode(`bot ${id} visual`, scene);
     this.root.parent = collisionMesh;
+    if (archetype.boss) {
+      this.root.scaling.setAll(1.12);
+    }
+
+    const uniformColor = archetype.type === "elite-sniper"
+      ? new Color3(0.08, 0.13, 0.18)
+      : archetype.type === "boss"
+        ? new Color3(0.2, 0.075, 0.06)
+        : archetype.type === "smg"
+          ? new Color3(0.105, 0.16, 0.13)
+          : new Color3(0.12, 0.135, 0.14);
+    const armorColor = archetype.type === "armoured"
+      ? new Color3(0.16, 0.17, 0.175)
+      : archetype.type === "boss"
+        ? new Color3(0.12, 0.035, 0.03)
+        : new Color3(0.055, 0.065, 0.07);
 
     const uniform = this.createMaterial(
       scene,
       `bot ${id} uniform material`,
-      new Color3(0.12, 0.135, 0.14),
+      uniformColor,
     );
     const armor = this.createMaterial(
       scene,
       `bot ${id} armor material`,
-      new Color3(0.055, 0.065, 0.07),
+      armorColor,
     );
     const fabric = this.createMaterial(
       scene,
@@ -161,25 +179,31 @@ export class BotVisual {
       new Color3(1, 0.42, 0.03),
       new Color3(1, 0.34, 0.015),
     );
+    const isSmg = archetype.weapon.type === "smg";
+    const isShotgun = archetype.weapon.type === "shotgun";
+    const isSniper = archetype.weapon.type === "sniper";
+    const receiverLength = isSmg ? 0.56 : isShotgun ? 0.92 : 0.82;
+    const barrelLength = isSmg ? 0.24 : isShotgun ? 0.58 : isSniper ? 0.72 : 0.45;
+    const muzzleZ = isSmg ? 1 : isShotgun ? 1.32 : isSniper ? 1.46 : 1.18;
     this.addBox(
       scene,
-      `bot ${id} rifle body`,
+      `bot ${id} ${archetype.weapon.type} body`,
       new Vector3(0.22, 0.25, 0.45),
-      [0.16, 0.17, 0.82],
+      [isShotgun ? 0.13 : 0.16, 0.17, receiverLength],
       weaponMaterial,
     );
     this.addBox(
       scene,
-      `bot ${id} rifle stock`,
+      `bot ${id} ${archetype.weapon.type} stock`,
       new Vector3(0.22, 0.25, 0.02),
       [0.23, 0.22, 0.28],
       weaponMaterial,
     );
     this.addBox(
       scene,
-      `bot ${id} rifle barrel`,
-      new Vector3(0.22, 0.27, 0.92),
-      [0.07, 0.07, 0.45],
+      `bot ${id} ${archetype.weapon.type} barrel`,
+      new Vector3(0.22, 0.27, muzzleZ - barrelLength / 2),
+      [isShotgun ? 0.1 : 0.07, isShotgun ? 0.1 : 0.07, barrelLength],
       weaponMaterial,
     );
     this.muzzleFlash = MeshBuilder.CreateSphere(
@@ -188,7 +212,7 @@ export class BotVisual {
       scene,
     );
     this.muzzleFlash.parent = this.root;
-    this.muzzleFlash.position.set(0.22, 0.27, 1.18);
+    this.muzzleFlash.position.set(0.22, 0.27, muzzleZ);
     this.muzzleFlash.material = flashMaterial;
     this.muzzleFlash.isPickable = false;
     this.muzzleFlash.setEnabled(false);

@@ -1,5 +1,4 @@
-export const DISTRICT_SIZE = 80;
-export const QUADRANT_SIZE = DISTRICT_SIZE / 2;
+export const DISTRICT_SIZE = 40;
 export const SAFE_ZONE_SIZE = 5;
 
 export interface HorizontalPosition {
@@ -13,27 +12,10 @@ export interface SafeZoneDefinition {
   size: number;
 }
 
-const SAFE_ZONE_OFFSET = 34;
-
 export const SAFE_ZONES: readonly SafeZoneDefinition[] = [
   {
     id: "southwest",
-    center: { x: -SAFE_ZONE_OFFSET, z: -SAFE_ZONE_OFFSET },
-    size: SAFE_ZONE_SIZE,
-  },
-  {
-    id: "southeast",
-    center: { x: SAFE_ZONE_OFFSET, z: -SAFE_ZONE_OFFSET },
-    size: SAFE_ZONE_SIZE,
-  },
-  {
-    id: "northwest",
-    center: { x: -SAFE_ZONE_OFFSET, z: SAFE_ZONE_OFFSET },
-    size: SAFE_ZONE_SIZE,
-  },
-  {
-    id: "northeast",
-    center: { x: SAFE_ZONE_OFFSET, z: SAFE_ZONE_OFFSET },
+    center: { x: -16, z: -16 },
     size: SAFE_ZONE_SIZE,
   },
 ] as const;
@@ -85,4 +67,11 @@ export function movementEntersSafeZone(
 
     return exit >= 0 && entry <= 1;
   });
+}
+
+export function segmentIntersectsSafeZone(
+  start: HorizontalPosition,
+  end: HorizontalPosition,
+) {
+  return movementEntersSafeZone(start, end);
 }

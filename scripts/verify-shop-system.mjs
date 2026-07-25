@@ -1,59 +1,116 @@
 import assert from "node:assert/strict";
-import {
-  applyShopPurchase,
-  createInitialShopState,
-  currentWeaponStats,
-  getShopAtPosition,
-  movementSpeedMultiplier,
-} from "../src/game/shopSystem.ts";
+import { rm, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
 
-assert.equal(
-  getShopAtPosition({ x: -34, z: -34 }),
-  "movement",
-  "southwest safe zone hosts the movement shop",
-);
-assert.equal(
-  getShopAtPosition({ x: 34, z: -34 }),
-  "health",
-  "southeast safe zone hosts the health shop",
-);
-assert.equal(
-  getShopAtPosition({ x: -34, z: 34 }),
-  "weapon",
-  "northwest safe zone hosts the weapon shop",
-);
-assert.equal(
-  getShopAtPosition({ x: 34, z: 34 }),
-  "utility",
-  "northeast safe zone hosts the utility shop",
-);
-assert.equal(getShopAtPosition({ x: 0, z: 0 }), undefined);
+const temporaryDirectory = await mkdtemp(join(tmpdir(), "neon-duel-shop-"));
+const bundledModule = join(temporaryDirectory, "shop-system.mjs");
 
-let state = createInitialShopState();
-state = applyShopPurchase(state, "movement-20");
-state = applyShopPurchase(state, "health-50");
-state = applyShopPurchase(state, "weapon-dmr");
-state = applyShopPurchase(state, "utility-damage");
-state = applyShopPurchase(state, "utility-magazine");
-state = applyShopPurchase(state, "utility-knife");
+try {
+  await build({
+    bundle: true,
+    entryPoints: ["src/game/shopSystem.ts"],
+    format: "esm",
+    logLevel: "silent",
+    outfile: bundledModule,
+    platform: "node",
+  });
 
-assert.equal(movementSpeedMultiplier(state), 1.2);
-assert.equal(state.maximumHealth, 150);
-assert.equal(state.selectedWeapon, "dmr");
-assert.equal(state.knifeDamage, 45);
-assert.equal(currentWeaponStats(state).bodyDamage, 53);
-assert.equal(currentWeaponStats(state).magazineSize, 17);
+  const {
+    awardCoins,
+    COIN_REWARDS,
+    createInitialShopState,
+    currentWeaponStats,
+    getShopAtPosition,
+    getBotKillCoinReward,
+    getShopPrice,
+    movementSpeedMultiplier,
+    purchaseShopItem,
+    SHOP_PURCHASE_IDS,
+  } = await import(pathToFileURL(bundledModule).href);
 
-for (let purchase = 0; purchase < 100_000; purchase += 1) {
-  state = applyShopPurchase(state, "utility-reload");
-  state = applyShopPurchase(state, "utility-damage");
-  state = applyShopPurchase(state, "utility-magazine");
+  assert.equal(getShopAtPosition({ x: -16, z: -16 }), "field");
+  assert.equal(getShopAtPosition({ x: 0, z: 0 }), undefined);
+  assert.deepEqual(SHOP_PURCHASE_IDS, [
+    "movement-10",
+    "health-10",
+    "rifle-damage-10",
+    "magazine-10",
+  ]);
+
+  let state = createInitialShopState();
+  assert.equal(state.coins, 0, "a new run starts with no coins");
+  assert.deepEqual(COIN_REWARDS, {
+    normalKill: 10,
+    headshotBonus: 2,
+    waveComplete: 25,
+  });
+  assert.equal(getBotKillCoinReward(false), 10);
+  assert.equal(getBotKillCoinReward(true), 12);
+  assert.equal(getShopPrice(state, "movement-10"), 140);
+  assert.equal(getShopPrice(state, "health-10"), 75);
+  assert.equal(getShopPrice(state, "rifle-damage-10"), 125);
+  assert.equal(getShopPrice(state, "magazine-10"), 75);
+
+  const rejectedPurchase = purchaseShopItem(state, "movement-10");
+  assert.equal(rejectedPurchase.status, "insufficient-funds");
+  assert.equal(
+    rejectedPurchase.state,
+    state,
+    "failed purchases do not mutate state",
+  );
+
+  state = awardCoins(state, 2_000);
+
+  let purchase = purchaseShopItem(state, "movement-10");
+  assert.equal(purchase.status, "purchased");
+  assert.equal(purchase.price, 140);
+  state = purchase.state;
+  assert.equal(movementSpeedMultiplier(state), 1.1);
+  assert.equal(getShopPrice(state, "movement-10"), 175);
+
+  purchase = purchaseShopItem(state, "movement-10");
+  assert.equal(purchase.price, 175);
+  state = purchase.state;
+  assert.equal(movementSpeedMultiplier(state), 1.2);
+
+  state = purchaseShopItem(state, "health-10").state;
+  assert.equal(state.healthBonusPercent, 10);
+  assert.equal(state.maximumHealth, 110);
+
+  state = purchaseShopItem(state, "rifle-damage-10").state;
+  assert.equal(state.rifleDamageBonusPercent, 10);
+  assert.equal(currentWeaponStats(state).bodyDamage, 22);
+  assertClose(currentWeaponStats(state).headshotDamage, 66);
+
+  state = purchaseShopItem(state, "magazine-10").state;
+  assert.equal(state.magazineBonusPercent, 10);
+  assert.equal(currentWeaponStats(state).magazineSize, 44);
+
+  state = purchaseShopItem(state, "health-10").state;
+  state = purchaseShopItem(state, "rifle-damage-10").state;
+  state = purchaseShopItem(state, "magazine-10").state;
+  assert.equal(state.maximumHealth, 120);
+  assert.equal(currentWeaponStats(state).bodyDamage, 24);
+  assertClose(currentWeaponStats(state).headshotDamage, 72);
+  assert.equal(currentWeaponStats(state).magazineSize, 48);
+
+  const resetState = createInitialShopState();
+  assert.equal(resetState.coins, 0);
+  assert.equal(resetState.maximumHealth, 100);
+  assert.equal(currentWeaponStats(resetState).bodyDamage, 20);
+  assert.equal(currentWeaponStats(resetState).magazineSize, 40);
+
+  console.log("Simplified shop-system verification passed.");
+} finally {
+  await rm(temporaryDirectory, {
+    force: true,
+    recursive: true,
+  });
 }
 
-const repeatedStats = currentWeaponStats(state);
-assert.ok(Number.isFinite(repeatedStats.bodyDamage));
-assert.ok(Number.isFinite(repeatedStats.magazineSize));
-assert.ok(Number.isFinite(repeatedStats.reloadMs));
-assert.ok(repeatedStats.reloadMs > 0);
-
-console.log("Shop-system verification passed.");
+function assertClose(actual, expected) {
+  assert.ok(Math.abs(actual - expected) < 1e-9);
+}
