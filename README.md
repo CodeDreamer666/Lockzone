@@ -43,3 +43,4 @@ Open the local URL printed by Vite in a browser.
 - `R` — Reload
 - `E` — Open or close the safe-zone shop
 - `Esc` — Pause
+# Lockzone
