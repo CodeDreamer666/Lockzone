@@ -1,6 +1,8 @@
 import {
+  ENEMY_ARCHETYPES,
   GAME_CONFIG,
   PLAYER_WEAPON_DAMAGE,
+  type EnemyType,
 } from "./gameConfig";
 import {
   type HorizontalPosition,
@@ -36,7 +38,6 @@ const MAXIMUM_SAFE_RUNTIME_VALUE = Number.MAX_SAFE_INTEGER;
 const REPEATED_PRICE_MULTIPLIER = 1.25;
 
 export const COIN_REWARDS = {
-  normalKill: 10,
   headshotBonus: 2,
   waveComplete: 25,
 } as const;
@@ -103,8 +104,11 @@ export function awardCoins(state: RunShopState, amount: number) {
   };
 }
 
-export function getBotKillCoinReward(headshot: boolean) {
-  return COIN_REWARDS.normalKill + (
+export function getBotKillCoinReward(
+  enemyType: EnemyType,
+  headshot: boolean,
+) {
+  return ENEMY_ARCHETYPES[enemyType].coinReward + (
     headshot ? COIN_REWARDS.headshotBonus : 0
   );
 }

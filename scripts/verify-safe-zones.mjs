@@ -74,14 +74,20 @@ for (const spawn of COMPACT_MAP_LAYOUT.botSpawns) {
 
 assert.equal(
   COMPACT_MAP_LAYOUT.cargoContainers.length,
-  5,
-  "the cover half has five deliberate container placements",
+  10,
+  "the compact yard has ten deliberate container placements",
 );
 assert.equal(
   COMPACT_MAP_LAYOUT.elevatedPlatforms.length,
-  2,
-  "the vertical half has two connected raised structures",
+  1,
+  "the map has exactly one organised raised structure",
 );
+for (const platform of COMPACT_MAP_LAYOUT.elevatedPlatforms) {
+  assert.ok(
+    COMPACT_MAP_LAYOUT.elevatedAccessRoutes[platform.id].length >= 2,
+    `${platform.id} has at least two access routes`,
+  );
+}
 assert.equal(
   COMPACT_MAP_LAYOUT.cargoContainers.some((container) => container.stacked),
   true,

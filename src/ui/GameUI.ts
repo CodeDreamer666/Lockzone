@@ -15,26 +15,25 @@ export interface HudValues {
   coins: number;
   magazine: number;
   magazineSize: number;
+  ammoText?: string;
   weaponName: string;
+  weaponHint: string;
   enemiesAlive: number;
   enemiesRemaining: number;
   remaining: number;
   message?: string;
-  milestoneNotice?: string;
-  enemyIndicators: EnemyIndicator[];
   announcement?: {
     title: string;
     detail: string;
   };
 }
 
-interface EnemyIndicator {
+export interface EnemyIndicator {
   id: number;
-  label: string;
-  distance: number;
   xPercent: number;
   yPercent: number;
-  angleDegrees: number;
+  distance: number;
+  edge: boolean;
 }
 
 export interface GameResults {
@@ -102,8 +101,7 @@ export class GameUI {
   showLoading(progress: number, status: string) {
     this.root.innerHTML = `
       <main class="loading-screen" aria-live="polite">
-        <p class="eyebrow">BLACKSITE // RAINLINE</p>
-        <h1>SECURITY DISTRICT</h1>
+        <h1>LOCK<br/>ZONE</h1>
         <p class="loading-status">${status}</p>
         <div class="loading-track"><span style="width: ${Math.max(0, Math.min(progress, 100))}%"></span></div>
         <p class="loading-percent">${Math.round(progress)}%</p>
@@ -114,23 +112,12 @@ export class GameUI {
     this.root.innerHTML = `
       <main class="menu menu--main">
         <p class="eyebrow">COMPACT INDUSTRIAL COMBAT YARD</p>
-        <h1>BLACKSITE<br><em>RAINLINE</em></h1>
-        <p class="lede">Late afternoon. Light rain. One tight forty-metre yard built around bordered shipping containers and connected tower routes.</p>
+        <h1>LOCK<br><em>ZONE</em></h1>
+        <p class="lede">Late afternoon. Light rain. One tight forty-metre yard built around bordered shipping-container lanes and one organised command platform.</p>
         <div class="menu-actions">
           <button id="start-match" class="primary-action">Start Mission</button>
-          <button id="show-controls" class="quiet-action">Controls</button>
         </div>
-        <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span>
-          <span><b>Space</b> Jump</span>
-          <span><b>Mouse</b> Look</span>
-          <span><b>Left click</b> Fire</span>
-          <span><b>Right click</b> Aim</span>
-          <span><b>R</b> Reload</span>
-          <span><b>E</b> Use safe-zone shop</span>
-          <span><b>Esc</b> Pause</span>
-        </section>
-        <p class="small">The mouse locks after the mission starts. Both raised platforms have a wide grounded ramp.</p>
+        <p class="small">The mouse locks after the mission starts. The command platform has two grounded ramp routes.</p>
       </main>`;
     this.bindStartActions(actions);
   }
@@ -140,16 +127,11 @@ export class GameUI {
       <div class="pause-backdrop"></div>
       <main class="menu menu--pause">
         <p class="eyebrow">MISSION PAUSED</p>
-        <h2>Hold position.</h2>
+        <h2>Hold position</h2>
         <div class="pause-actions">
           <button id="resume-match" class="primary-action">Resume</button>
           <button id="restart-match" class="quiet-action">Restart</button>
-          <button id="pause-controls" class="quiet-action">Controls</button>
-          <button id="main-menu" class="text-action">Return to main menu</button>
         </div>
-        <section id="controls-panel" class="menu-panel controls" hidden>
-          <span><b>WASD</b> Move</span><span><b>Space</b> Jump</span><span><b>Mouse</b> Look</span><span><b>Left click</b> Fire</span><span><b>Right click</b> Aim</span><span><b>R</b> Reload</span><span><b>E</b> Use safe-zone shop</span><span><b>Esc</b> Pause</span>
-        </section>
       </main>`;
     document.querySelector("#resume-match")?.addEventListener("click", actions.onResume);
     document.querySelector("#restart-match")?.addEventListener("click", actions.onRestart);
@@ -175,9 +157,8 @@ export class GameUI {
           <span class="scope-dot"></span>
         </div>
       </div>
+      <div id="enemy-indicators" aria-hidden="true"></div>
       <div id="feedback"></div>
-      <div id="milestone-notice" class="milestone-notice" hidden></div>
-      <div id="enemy-indicators" aria-live="off"></div>
       <div id="shop-prompt" class="shop-prompt" hidden></div>
       <div id="wave-announcement" class="wave-announcement" hidden>
         <strong id="announcement-title"></strong>
@@ -195,12 +176,34 @@ export class GameUI {
             <b id="enemies-remaining">15</b>
           </div>
         </div>
-        <div class="hud-readout hud-ammo"><span id="weapon-name">ASSAULT RIFLE</span><b id="ammo">40 / 40</b></div>
+        <div class="hud-readout hud-ammo">
+          <span id="weapon-name">ASSAULT RIFLE</span>
+          <b id="ammo">40 / 40</b>
+          <small id="weapon-hint">1 RIFLE · 2 SNIPER</small>
+        </div>
       </div>`;
   }
 
-  setAiming(aiming: boolean) {
+  setAiming(aiming: boolean, scoped = false) {
     this.root.classList.toggle("is-aiming", aiming);
+    this.root.classList.toggle("is-scoped", aiming && scoped);
+  }
+
+  renderEnemyIndicators(indicators: EnemyIndicator[]) {
+    const container = document.querySelector<HTMLElement>(
+      "#enemy-indicators",
+    );
+    if (!container) return;
+    container.innerHTML = indicators.map((indicator) => `
+      <span
+        class="enemy-location-indicator${indicator.edge ? " is-edge" : ""}"
+        data-enemy-id="${indicator.id}"
+        style="left:${indicator.xPercent.toFixed(2)}%;top:${indicator.yPercent.toFixed(2)}%"
+      >
+        <i></i>
+        <b>${Math.round(indicator.distance)}m</b>
+      </span>
+    `).join("");
   }
 
   setShopPrompt(message?: string) {
@@ -277,10 +280,12 @@ export class GameUI {
     );
     this.setText(
       "ammo",
-      `${values.magazine} / ${values.magazineSize}`,
+      values.ammoText
+        ?? `${values.magazine} / ${values.magazineSize}`,
     );
     this.setText("coins", String(values.coins));
     this.setText("weapon-name", values.weaponName.toUpperCase());
+    this.setText("weapon-hint", values.weaponHint);
     this.setText("enemies-alive", String(values.enemiesAlive));
     this.setText("enemies-remaining", String(values.enemiesRemaining));
     const totalSeconds = Math.ceil(values.remaining);
@@ -292,14 +297,6 @@ export class GameUI {
       .padStart(2, "0");
     this.setText("timer", `${minutes}:${seconds}`);
     if (values.message !== undefined) this.setText("feedback", values.message);
-    const milestone = document.querySelector<HTMLElement>(
-      "#milestone-notice",
-    );
-    if (milestone) {
-      milestone.hidden = !values.milestoneNotice;
-      milestone.textContent = values.milestoneNotice ?? "";
-    }
-    this.renderEnemyIndicators(values.enemyIndicators);
     const announcement = document.querySelector<HTMLElement>(
       "#wave-announcement",
     );
@@ -507,31 +504,6 @@ export class GameUI {
 
   hideMovementContactDebug() {
     document.querySelector("#movement-contact-debug")?.remove();
-  }
-
-  private renderEnemyIndicators(indicators: EnemyIndicator[]) {
-    const container = document.querySelector<HTMLElement>(
-      "#enemy-indicators",
-    );
-    if (!container) return;
-
-    const markers = indicators.map((indicator) => {
-      const marker = document.createElement("div");
-      const arrow = document.createElement("span");
-      const label = document.createElement("b");
-      const distance = document.createElement("small");
-      marker.className = "enemy-indicator";
-      marker.dataset.enemyId = String(indicator.id);
-      marker.style.left = `${indicator.xPercent}%`;
-      marker.style.top = `${indicator.yPercent}%`;
-      arrow.textContent = "▲";
-      arrow.style.transform = `rotate(${indicator.angleDegrees}deg)`;
-      label.textContent = indicator.label;
-      distance.textContent = `${Math.round(indicator.distance)}m`;
-      marker.append(arrow, label, distance);
-      return marker;
-    });
-    container.replaceChildren(...markers);
   }
 
   private bindStartActions(actions: MenuActions) {

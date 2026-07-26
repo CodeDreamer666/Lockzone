@@ -6,6 +6,7 @@ import {
   FreeCamera,
   GlowLayer,
   HemisphericLight,
+  Matrix,
   Mesh,
   MeshBuilder,
   PBRMaterial,
@@ -19,6 +20,11 @@ import {
 } from "@babylonjs/core";
 import { AudioManager } from "../audio/AudioManager";
 import { BotManager } from "../bot/BotManager";
+import { CombatEffectManager } from "../combat/CombatEffectManager";
+import {
+  SNIPER_CONFIG,
+  SniperWeapon,
+} from "../combat/SniperWeapon";
 import { Weapon } from "../combat/Weapon";
 import {
   createMap,
@@ -30,11 +36,13 @@ import { createMovementTestMap } from "../map/createMovementTestMap";
 import { isInsideSafeZone } from "../map/safeZones";
 import {
   GameUI,
+  type EnemyIndicator,
   type ShopMenuData,
 } from "../ui/GameUI";
 import {
   GAME_CONFIG,
   createWaveConfig,
+  type EnemyType,
   OPENING_COUNTDOWN_SECONDS,
   WAVE_TRANSITION_SECONDS,
 } from "./gameConfig";
@@ -68,6 +76,7 @@ import {
 } from "./shopSystem";
 
 type MatchPhase = "opening" | "active" | "transition" | "ended";
+type PlayerWeaponKind = "rifle" | "sniper";
 
 export class Game {
   private readonly canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
@@ -79,6 +88,8 @@ export class Game {
   private playerTarget!: Mesh;
   private botManager?: BotManager;
   private weapon = new Weapon();
+  private sniper = new SniperWeapon();
+  private equippedWeapon: PlayerWeaponKind = "rifle";
   private cover: AbstractMesh[] = [];
   private walkableSurfaces: AbstractMesh[] = [];
   private playerHealth: number = GAME_CONFIG.player.health;
@@ -86,7 +97,6 @@ export class Game {
   private nearbyShop?: ShopKind;
   private activeShop?: ShopKind;
   private shopMessage?: string;
-  private milestoneNoticeRemainingSeconds = 0;
   private playerDamagedAt = -Infinity;
   private regenerationActive = false;
   private remaining = 0;
@@ -109,8 +119,11 @@ export class Game {
   private feedback = "Click Start to enter the arena";
   private sensitivity: number = GAME_CONFIG.camera.sensitivity;
   private pendingLookDelta: LookDelta = { x: 0, y: 0 };
-  private weaponRig?: TransformNode;
-  private muzzleFlash?: Mesh;
+  private rifleRig?: TransformNode;
+  private sniperRig?: TransformNode;
+  private rifleMuzzleFlash?: Mesh;
+  private sniperMuzzleFlash?: Mesh;
+  private weaponSwitchStartedAt = -Infinity;
   private recoil = 0;
   private footstepDistance = 0;
   private currentSurface: SurfaceType = "asphalt";
@@ -124,6 +137,7 @@ export class Game {
   private activeContactDebugMeshes: AbstractMesh[] = [];
   private activeContactDebugUpdatedAt = -Infinity;
   private readonly combatEffects = new Set<Mesh>();
+  private combatEffectManager?: CombatEffectManager;
   private readonly movementTestMode = this.collisionDebugAvailable
     && new URLSearchParams(window.location.search).has("movementTest");
   private readonly gameplayTestMode = this.collisionDebugAvailable
@@ -141,8 +155,19 @@ export class Game {
     : null;
   private gameplayTestNextActionAt = 0;
   private gameplayTestActionComplete = false;
+  private gameplayTestStage = 0;
   private gameplayTestMaximumAlive: number[] = [];
   private gameplayTestElevatedSpawns: number[] = [];
+  private gameplayTestMaximumShooters = 0;
+  private gameplayTestMaximumActiveByType: Record<EnemyType, number> = {
+    normal: 0,
+    armoured: 0,
+    smg: 0,
+    shotgun: 0,
+    sniper: 0,
+    boss: 0,
+  };
+  private gameplayTestAttackRestrictionViolation = false;
 
   start() {
     this.engine.runRenderLoop(() => this.scene?.render());
@@ -159,6 +184,8 @@ export class Game {
     await this.waitForPaint();
     this.weapon.dispose();
     this.botManager?.dispose();
+    this.combatEffectManager?.dispose();
+    this.combatEffectManager = undefined;
     this.scene?.dispose();
     this.resetMatch();
     this.createScene();
@@ -198,19 +225,22 @@ export class Game {
 
   private resetMatch() {
     this.weapon = new Weapon();
+    this.sniper = new SniperWeapon();
+    this.equippedWeapon = "rifle";
     this.shopState = createInitialShopState();
     this.syncWeaponStats(true);
     this.playerHealth = this.shopState.maximumHealth;
     this.nearbyShop = undefined;
     this.activeShop = undefined;
     this.shopMessage = undefined;
-    this.milestoneNoticeRemainingSeconds = 0;
     this.ui.hideShop();
     this.playerDamagedAt = -Infinity;
     this.regenerationActive = false;
     this.remaining = 0;
     this.phase = "opening";
-    this.phaseRemaining = OPENING_COUNTDOWN_SECONDS;
+    this.phaseRemaining = this.gameplayTestMode
+      ? 0.15
+      : OPENING_COUNTDOWN_SECONDS;
     this.waveIndex = this.gameplayTestMode
       ? this.gameplayTestWave - 1
       : 0;
@@ -224,6 +254,16 @@ export class Game {
     this.gameplayTestActionComplete = false;
     this.gameplayTestMaximumAlive = [];
     this.gameplayTestElevatedSpawns = [];
+    this.gameplayTestMaximumShooters = 0;
+    this.gameplayTestMaximumActiveByType = {
+      normal: 0,
+      armoured: 0,
+      smg: 0,
+      shotgun: 0,
+      sniper: 0,
+      boss: 0,
+    };
+    this.gameplayTestAttackRestrictionViolation = false;
     this.playerController = undefined;
     this.pushablePropController = undefined;
     this.jumpQueued = false;
@@ -233,6 +273,7 @@ export class Game {
     this.feedback = `Prepare for Wave ${this.waveIndex + 1}`;
     this.mouseDown = false;
     this.recoil = 0;
+    this.weaponSwitchStartedAt = -Infinity;
     this.clearLookInput();
     this.clearCombatEffects();
   }
@@ -253,6 +294,10 @@ export class Game {
       this.walkableSurfaces,
     );
     this.pushablePropController = new PushablePropController(map.pushableProps, this.cover);
+    this.combatEffectManager = new CombatEffectManager(
+      this.scene,
+      this.walkableSurfaces,
+    );
     this.createPlayerTarget();
     this.botManager = this.movementTestMode
       ? undefined
@@ -262,11 +307,12 @@ export class Game {
         this.walkableSurfaces,
         map.botSpawns,
         map.resourcePoints,
+        map.navigationNodes,
         () => {
           this.totalEnemiesDefeated += 1;
         },
       );
-    this.createFirstPersonWeapon();
+    this.createFirstPersonWeapons();
     this.scene.onBeforeRenderObservable.add(() => this.update());
   }
 
@@ -333,6 +379,8 @@ export class Game {
     this.weapon.dispose();
     this.botManager?.dispose();
     this.botManager = undefined;
+    this.combatEffectManager?.dispose();
+    this.combatEffectManager = undefined;
     this.clearCombatEffects();
     this.scene?.dispose();
     this.createPresentationScene();
@@ -345,7 +393,7 @@ export class Game {
 
   private createPresentationScene() {
     this.createEnvironmentScene(false);
-    this.camera = this.createCamera(new Vector3(-34, 10, -35));
+    this.camera = this.createCamera(new Vector3(-23, 10, -24));
     this.camera.checkCollisions = false;
     this.camera.fov = 0.95;
     this.camera.setTarget(new Vector3(0, 3, 0));
@@ -354,11 +402,11 @@ export class Game {
       this.presentationTime += Math.min(this.engine.getDeltaTime() / 1000, 0.04);
       const t = this.presentationTime;
       const views = [
-        { position: new Vector3(-34, 10, -35), target: new Vector3(0, 3, 0) },
-        { position: new Vector3(-31, 7, 5), target: new Vector3(-4, 3, 5) },
-        { position: new Vector3(-5, 9, -33), target: new Vector3(2, 3, 2) },
-        { position: new Vector3(34, 11, -22), target: new Vector3(12, 4, 9) },
-        { position: new Vector3(31, 12, 34), target: new Vector3(2, 4, 16) },
+        { position: new Vector3(-23, 10, -24), target: new Vector3(0, 3, 0) },
+        { position: new Vector3(-22, 8, 4), target: new Vector3(-3, 3, 5) },
+        { position: new Vector3(-4, 10, -23), target: new Vector3(2, 3, 2) },
+        { position: new Vector3(23, 11, -16), target: new Vector3(9, 4, 7) },
+        { position: new Vector3(22, 12, 23), target: new Vector3(2, 4, 12) },
       ];
       const view = views[Math.floor(t / 7) % views.length];
       this.camera.position.copyFrom(view.position.add(new Vector3(Math.sin(t * 0.09) * 2, Math.sin(t * 0.14) * 0.5, Math.cos(t * 0.08) * 1.5)));
@@ -378,31 +426,120 @@ export class Game {
     this.playerTarget.isPickable = true;
   }
 
-  private createFirstPersonWeapon() {
-    this.weaponRig = new TransformNode("rifle view model", this.scene);
-    this.weaponRig.parent = this.camera;
-    this.weaponRig.position.set(0.42, -0.38, 0.72);
-    this.weaponRig.rotation.set(0.02, Math.PI, 0);
-    const rifle = this.weaponRig;
+  private createFirstPersonWeapons() {
+    this.rifleRig = new TransformNode("rifle view model", this.scene);
+    this.rifleRig.parent = this.camera;
+    this.rifleRig.position.set(0.42, -0.38, 0.72);
+    this.rifleRig.rotation.set(0.02, Math.PI, 0);
+    const rifle = this.rifleRig;
     const metal = this.createRifleMaterial("rifle metal", new Color3(0.045, 0.055, 0.06), 0.9, 0.36);
     const grip = this.createRifleMaterial("rifle grip", new Color3(0.12, 0.1, 0.08), 0.1, 0.75);
-    const addPart = (name: string, position: Vector3, size: [number, number, number], material: PBRMaterial) => {
+    const addPart = (
+      parent: TransformNode,
+      name: string,
+      position: Vector3,
+      size: [number, number, number],
+      material: PBRMaterial,
+    ) => {
       const mesh = MeshBuilder.CreateBox(name, { width: size[0], height: size[1], depth: size[2] }, this.scene);
-      mesh.parent = rifle;
+      mesh.parent = parent;
       mesh.position.copyFrom(position);
       mesh.material = material;
+      mesh.isPickable = false;
+      return mesh;
     };
-    addPart("rifle receiver", new Vector3(0, 0, 0), [0.22, 0.17, 0.72], metal);
-    addPart("rifle barrel", new Vector3(0, 0.02, 0.55), [0.07, 0.07, 0.58], metal);
-    addPart("rifle stock", new Vector3(0, 0.01, -0.52), [0.18, 0.16, 0.42], grip);
-    addPart("rifle magazine", new Vector3(0.02, -0.18, 0.04), [0.12, 0.32, 0.2], metal);
-    this.muzzleFlash = MeshBuilder.CreateSphere("muzzle flash", { diameter: 0.16 }, this.scene);
-    this.muzzleFlash.parent = this.weaponRig;
-    this.muzzleFlash.position.set(0, 0.02, 0.88);
-    const flashMaterial = new StandardMaterial("flash material", this.scene);
-    flashMaterial.emissiveColor = new Color3(1, 0.55, 0.08);
-    this.muzzleFlash.material = flashMaterial;
-    this.muzzleFlash.setEnabled(false);
+    addPart(rifle, "rifle receiver", new Vector3(0, 0, 0), [0.22, 0.17, 0.72], metal);
+    addPart(rifle, "rifle barrel", new Vector3(0, 0.02, 0.55), [0.07, 0.07, 0.58], metal);
+    addPart(rifle, "rifle stock", new Vector3(0, 0.01, -0.52), [0.18, 0.16, 0.42], grip);
+    addPart(rifle, "rifle magazine", new Vector3(0.02, -0.18, 0.04), [0.12, 0.32, 0.2], metal);
+    this.rifleMuzzleFlash = MeshBuilder.CreateSphere(
+      "rifle muzzle flash",
+      { diameter: 0.16 },
+      this.scene,
+    );
+    this.rifleMuzzleFlash.parent = rifle;
+    this.rifleMuzzleFlash.position.set(0, 0.02, 0.88);
+    const rifleFlashMaterial = new StandardMaterial(
+      "rifle flash material",
+      this.scene,
+    );
+    rifleFlashMaterial.emissiveColor = new Color3(1, 0.55, 0.08);
+    this.rifleMuzzleFlash.material = rifleFlashMaterial;
+    this.rifleMuzzleFlash.setEnabled(false);
+
+    this.sniperRig = new TransformNode("sniper view model", this.scene);
+    this.sniperRig.parent = this.camera;
+    this.sniperRig.position.set(0.46, -0.43, 0.84);
+    this.sniperRig.rotation.set(0.015, Math.PI, 0);
+    const sniperMetal = this.createRifleMaterial(
+      "sniper gunmetal",
+      new Color3(0.035, 0.055, 0.065),
+      0.92,
+      0.3,
+    );
+    const sniperStock = this.createRifleMaterial(
+      "sniper olive stock",
+      new Color3(0.12, 0.15, 0.1),
+      0.18,
+      0.7,
+    );
+    addPart(
+      this.sniperRig,
+      "sniper receiver",
+      new Vector3(0, 0, 0.04),
+      [0.24, 0.18, 0.82],
+      sniperMetal,
+    );
+    addPart(
+      this.sniperRig,
+      "sniper long barrel",
+      new Vector3(0, 0.025, 0.86),
+      [0.065, 0.065, 1.05],
+      sniperMetal,
+    );
+    addPart(
+      this.sniperRig,
+      "sniper stock",
+      new Vector3(0, 0, -0.61),
+      [0.22, 0.2, 0.52],
+      sniperStock,
+    );
+    addPart(
+      this.sniperRig,
+      "sniper six-shot housing",
+      new Vector3(0, -0.15, 0.05),
+      [0.14, 0.22, 0.25],
+      sniperMetal,
+    );
+    const scope = MeshBuilder.CreateCylinder(
+      "sniper scope",
+      {
+        diameter: 0.18,
+        height: 0.62,
+        tessellation: 16,
+      },
+      this.scene,
+    );
+    scope.parent = this.sniperRig;
+    scope.position.set(0, 0.2, 0.08);
+    scope.rotation.x = Math.PI / 2;
+    scope.material = sniperMetal;
+    scope.isPickable = false;
+    this.sniperMuzzleFlash = MeshBuilder.CreateSphere(
+      "sniper muzzle flash",
+      { diameter: 0.29, segments: 8 },
+      this.scene,
+    );
+    this.sniperMuzzleFlash.parent = this.sniperRig;
+    this.sniperMuzzleFlash.position.set(0, 0.025, 1.4);
+    const sniperFlashMaterial = new StandardMaterial(
+      "sniper flash material",
+      this.scene,
+    );
+    sniperFlashMaterial.emissiveColor = new Color3(0.72, 0.9, 1);
+    this.sniperMuzzleFlash.material = sniperFlashMaterial;
+    this.sniperMuzzleFlash.setEnabled(false);
+    this.sniperRig.setEnabled(false);
   }
 
   private createRifleMaterial(name: string, color: Color3, metallic: number, roughness: number) {
@@ -415,7 +552,22 @@ export class Game {
 
   private bindControls() {
     window.onkeydown = (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR", "KeyE", "Escape", "F3", "F7"].includes(event.code)) event.preventDefault();
+      if ([
+        "KeyW",
+        "KeyA",
+        "KeyS",
+        "KeyD",
+        "Space",
+        "KeyR",
+        "KeyE",
+        "Digit1",
+        "Digit2",
+        "Escape",
+        "F3",
+        "F7",
+      ].includes(event.code)) {
+        event.preventDefault();
+      }
       if (event.code === "F3" && this.collisionDebugAvailable) {
         this.toggleCollisionDebug();
         return;
@@ -441,9 +593,17 @@ export class Game {
         }
         return;
       }
+      if (event.code === "Digit1" && !event.repeat) {
+        this.switchWeapon("rifle");
+        return;
+      }
+      if (event.code === "Digit2" && !event.repeat) {
+        this.switchWeapon("sniper");
+        return;
+      }
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
-      if (event.code === "KeyR") this.reload();
+      if (event.code === "KeyR" && !event.repeat) this.reload();
     };
     window.onkeyup = (event) => this.keys.delete(event.code);
     window.onblur = () => {
@@ -506,19 +666,19 @@ export class Game {
     const deltaSeconds = clampDeltaSeconds(this.engine.getDeltaTime());
     if (deltaSeconds === 0) return;
     const now = performance.now();
+    if (this.sniper.update(now)) {
+      this.feedback = "Sniper recharged — 6 shots ready";
+    }
     this.runElapsedSeconds += deltaSeconds;
     this.updateCameraLook(deltaSeconds);
     this.movePlayer(deltaSeconds);
     this.updateShopAvailability();
     this.updateAim(deltaSeconds);
     this.audio.setListener(this.camera.position);
+    this.combatEffectManager?.update(now, deltaSeconds);
 
     if (this.phase === "active") {
       this.remaining += deltaSeconds;
-      this.milestoneNoticeRemainingSeconds = Math.max(
-        0,
-        this.milestoneNoticeRemainingSeconds - deltaSeconds,
-      );
       this.updatePlayerRegeneration(now, deltaSeconds);
       if (this.mouseDown) this.shoot(now);
       this.botManager?.update(
@@ -529,11 +689,28 @@ export class Game {
         this.playerTarget,
         this.playerController.getSnapshot().velocityAfterCollision.length(),
         this.shopState.maximumHealth,
-        (bot) => this.audio.play("enemyShot", bot.mesh.position),
+        (bot) => this.audio.playEnemyAttack(
+          bot.enemyType,
+          bot.mesh.position,
+        ),
+        (bot) => this.audio.playEnemyWarning(
+          bot.enemyType,
+          bot.mesh.position,
+        ),
         (damage) => {
           if (
             this.gameplayTestMode
-            && this.gameplayTestScenario === "observe"
+            && [
+              "observe",
+              "sniperLongRange",
+              "sniperNearMiss",
+              "sniperScope",
+              "attackSlots",
+              "slotRelease",
+              "sniperEnemy",
+              "shotgunEnemy",
+              "bossEnemy",
+            ].includes(this.gameplayTestScenario)
           ) {
             return;
           }
@@ -561,34 +738,55 @@ export class Game {
       this.runGameplayTest(now);
     }
     this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
-    if (this.weaponRig) {
-      this.weaponRig.position.x = 0.42 * (1 - this.aimBlend);
-      this.weaponRig.position.y = -0.38 + 0.25 * this.aimBlend - this.recoil * 2;
-      this.weaponRig.position.z = 0.72 - 0.12 * this.aimBlend;
-    }
+    this.updateWeaponPresentation(now);
     this.updateHud();
+    this.updateEnemyIndicators();
     this.updateCollisionDebugReadout(now);
     this.updateActiveContactDebug();
   }
 
   private startCurrentWave(now: number) {
     const wave = createWaveConfig(this.waveIndex + 1);
+    if (
+      this.gameplayTestMode
+      && this.gameplayTestScenario === "observe"
+    ) {
+      this.camera.position.set(12, GAME_CONFIG.player.standingHeight, -8);
+      this.camera.setTarget(new Vector3(4, 1.7, 3));
+      this.playerController?.reset();
+    }
     this.phase = "active";
     this.remaining = 0;
-    this.milestoneNoticeRemainingSeconds = wave.milestoneNotice
-      ? 4.5
-      : 0;
     this.feedback = `${wave.name} engaged · ${wave.totalEnemies} enemies`;
     this.botManager?.startWave(wave, now);
   }
 
   private completeWave() {
     if (this.phase !== "active") return;
+    const cleanupBefore = this.gameplayTestMode
+      ? {
+          bloodDecals: this.combatEffectManager?.activeDecalCount ?? 0,
+          bloodParticles: this.combatEffectManager?.activeParticleCount ?? 0,
+          bulletEffects: this.combatEffects.size,
+          deadBodies: this.botManager?.deadBodies ?? 0,
+        }
+      : undefined;
     this.gameplayTestElevatedSpawns[this.waveIndex] = 0;
     this.wavesCompleted += 1;
     this.shopState = awardCoins(this.shopState, COIN_REWARDS.waveComplete);
     this.botManager?.stopWave();
     this.clearCombatEffects();
+    if (cleanupBefore) {
+      document.documentElement.dataset.waveCleanupEvidence = JSON.stringify({
+        before: cleanupBefore,
+        after: {
+          bloodDecals: this.combatEffectManager?.activeDecalCount ?? 0,
+          bloodParticles: this.combatEffectManager?.activeParticleCount ?? 0,
+          bulletEffects: this.combatEffects.size,
+          deadBodies: this.botManager?.deadBodies ?? 0,
+        },
+      });
+    }
     this.mouseDown = false;
     this.cancelAim();
     this.clearMovementInput();
@@ -596,7 +794,6 @@ export class Game {
     this.weapon.refill();
     this.regenerationActive = false;
     this.playerDamagedAt = -Infinity;
-    this.milestoneNoticeRemainingSeconds = 0;
     this.waveIndex += 1;
     this.phase = "transition";
     this.phaseRemaining = WAVE_TRANSITION_SECONDS;
@@ -620,19 +817,21 @@ export class Game {
       coins: this.shopState.coins,
       magazine: this.weapon.magazine,
       magazineSize: currentWeaponStats(this.shopState).magazineSize,
-      weaponName: RIFLE_DEFINITION.displayName,
       enemiesAlive: transitioning ? 0 : (this.botManager?.alive ?? 0),
       enemiesRemaining: transitioning
         ? wave.totalEnemies
         : (this.botManager?.remaining ?? 0),
       remaining: this.remaining,
-      enemyIndicators: this.createEnemyIndicators(),
-      milestoneNotice: this.milestoneNoticeRemainingSeconds > 0
-        ? wave.milestoneNotice
-        : undefined,
+      ammoText: this.getWeaponAmmoText(performance.now()),
+      weaponName: this.equippedWeapon === "sniper"
+        ? "Sniper"
+        : RIFLE_DEFINITION.displayName,
+      weaponHint: this.equippedWeapon === "sniper"
+        ? "1 RIFLE · 2 SNIPER SELECTED"
+        : "1 RIFLE SELECTED · 2 SNIPER",
       message: this.movementTestMode
         ? "Movement test area — F7 shows controller diagnostics"
-        : this.weapon.isReloading
+        : this.equippedWeapon === "rifle" && this.weapon.isReloading
           ? "Reloading…"
           : this.feedback,
       announcement: this.phase === "opening"
@@ -652,66 +851,126 @@ export class Game {
     });
   }
 
-  private createEnemyIndicators() {
-    if (this.phase !== "active") return [];
-    const locations = this.botManager?.remainingEnemyLocations ?? [];
-    const forward = this.camera.getDirection(Vector3.Forward());
-    const right = this.camera.getDirection(Vector3.Right());
-    forward.y = 0;
-    right.y = 0;
-    forward.normalize();
-    right.normalize();
-
-    const indicators = locations.map((enemy, index) => {
-      const direction = enemy.position.subtract(this.camera.position);
-      const distance = direction.length();
-      direction.y = 0;
-      direction.normalize();
-      const forwardAmount = Vector3.Dot(forward, direction);
-      const rightAmount = Vector3.Dot(right, direction);
-      const angle = Math.atan2(rightAmount, forwardAmount);
-      return {
-        id: enemy.id,
-        label: enemy.label,
-        distance,
-        xPercent: Math.max(
-          4,
-          Math.min(
-            96,
-            50
-              + Math.sin(angle) * 43
-              + (index - (locations.length - 1) / 2) * 2.2,
-          ),
-        ),
-        yPercent: 50 - Math.cos(angle) * 38,
-        angleDegrees: angle * 180 / Math.PI,
-      };
-    });
-    for (let index = 0; index < indicators.length; index += 1) {
-      let attempts = 0;
-      while (
-        indicators.slice(0, index).some((other) => (
-          Math.abs(other.xPercent - indicators[index].xPercent) < 8
-          && Math.abs(other.yPercent - indicators[index].yPercent) < 7
-        ))
-        && attempts < indicators.length
-      ) {
-        const direction = index % 2 === 0 ? 1 : -1;
-        indicators[index].yPercent = Math.max(
-          7,
-          Math.min(
-            93,
-            indicators[index].yPercent + direction * 7,
-          ),
-        );
-        attempts += 1;
-      }
+  private updateEnemyIndicators() {
+    if (
+      this.phase !== "active"
+      || !this.botManager
+      || this.botManager.remaining > 5
+      || this.botManager.remaining === 0
+    ) {
+      this.ui.renderEnemyIndicators([]);
+      return;
     }
-    return indicators;
+
+    const width = this.engine.getRenderWidth();
+    const height = this.engine.getRenderHeight();
+    const viewport = this.camera.viewport.toGlobal(width, height);
+    const transform = this.scene.getTransformMatrix();
+    const cameraForward = this.camera
+      .getDirection(Vector3.Forward())
+      .normalize();
+    const cameraRight = this.camera
+      .getDirection(Vector3.Right())
+      .normalize();
+    const indicators: EnemyIndicator[] = this.botManager.bots
+      .filter((bot) => bot.isAlive)
+      .map((bot) => {
+        const position = bot.bodyHitbox.getAbsolutePosition();
+        const offset = position.subtract(this.camera.position);
+        const behind = Vector3.Dot(cameraForward, offset) <= 0;
+        const projected = Vector3.Project(
+          position,
+          Matrix.Identity(),
+          transform,
+          viewport,
+        );
+        const outsideViewport = (
+          projected.x < 0
+          || projected.x > width
+          || projected.y < 0
+          || projected.y > height
+          || projected.z < 0
+          || projected.z > 1
+        );
+        const edge = behind || outsideViewport;
+        const xPercent = behind
+          ? Vector3.Dot(cameraRight, offset) >= 0
+            ? 94
+            : 6
+          : Math.max(5, Math.min(95, projected.x / width * 100));
+        const yPercent = behind
+          ? 50
+          : Math.max(7, Math.min(86, projected.y / height * 100));
+        return {
+          id: bot.id,
+          xPercent,
+          yPercent,
+          distance: offset.length(),
+          edge,
+        };
+      });
+    this.ui.renderEnemyIndicators(indicators);
   }
 
   private runGameplayTest(now: number) {
     const currentAlive = this.botManager?.alive ?? 0;
+    const wave = createWaveConfig(this.waveIndex + 1);
+    const combatBots = this.botManager?.combatDebugBots ?? [];
+    const activeAttackers = combatBots.filter(
+      (bot) => bot.ownsAttackSlot,
+    );
+    this.gameplayTestMaximumShooters = Math.max(
+      this.gameplayTestMaximumShooters,
+      activeAttackers.length,
+    );
+    const livingTypeCounts = (
+      this.botManager?.livingEnemyTypes ?? []
+    ).reduce<Record<EnemyType, number>>(
+      (counts, enemyType) => {
+        counts[enemyType] += 1;
+        return counts;
+      },
+      {
+        normal: 0,
+        armoured: 0,
+        smg: 0,
+        shotgun: 0,
+        sniper: 0,
+        boss: 0,
+      },
+    );
+    for (const enemyType of Object.keys(
+      livingTypeCounts,
+    ) as EnemyType[]) {
+      this.gameplayTestMaximumActiveByType[enemyType] = Math.max(
+        this.gameplayTestMaximumActiveByType[enemyType],
+        livingTypeCounts[enemyType],
+      );
+      if (
+        livingTypeCounts[enemyType]
+        > wave.maximumActiveByType[enemyType]
+      ) {
+        this.gameplayTestAttackRestrictionViolation = true;
+      }
+    }
+    const activeAttackerTypes = activeAttackers.map(
+      (bot) => bot.enemyType,
+    );
+    if (
+      activeAttackers.length > wave.maximumShooters
+      || (
+        activeAttackerTypes.includes("boss")
+        && activeAttackerTypes.includes("sniper")
+      )
+    ) {
+      this.gameplayTestAttackRestrictionViolation = true;
+    }
+    document.documentElement.dataset.attackRestrictionEvidence = JSON.stringify({
+      maximumShootersObserved: this.gameplayTestMaximumShooters,
+      shooterLimit: wave.maximumShooters,
+      maximumActiveByType: this.gameplayTestMaximumActiveByType,
+      violation: this.gameplayTestAttackRestrictionViolation,
+    });
     this.gameplayTestMaximumAlive[this.waveIndex] = Math.max(
       this.gameplayTestMaximumAlive[this.waveIndex] ?? 0,
       currentAlive,
@@ -724,18 +983,83 @@ export class Game {
       if (this.gameplayTestScenario === "healthDefeat") {
         this.gameplayTestActionComplete = true;
         this.damagePlayer(this.playerHealth, now);
+      } else if (this.gameplayTestScenario === "safeZone") {
+        this.camera.position.set(-16, GAME_CONFIG.player.standingHeight, -16);
+        const magazineBefore = this.weapon.magazine;
+        this.shoot(now);
+        document.documentElement.dataset.safeZoneEvidence = JSON.stringify({
+          insideSafeZone: isInsideSafeZone(this.camera.position),
+          magazineBefore,
+          magazineAfter: this.weapon.magazine,
+        });
+        this.gameplayTestActionComplete = true;
       } else if (
         this.gameplayTestScenario === "enemyAttack"
         && currentAlive > 0
       ) {
         const target = this.botManager?.bots.find((bot) => bot.isAlive);
         if (target) {
-          target.mesh.position.set(0, 1.3, 0);
+          target.mesh.position.set(18, 1.3, 8);
           target.mesh.computeWorldMatrix(true);
-          this.camera.position.set(0, 1.7, 8);
+          target.bodyHitbox.computeWorldMatrix(true);
+          this.camera.position.set(18, 1.7, -6);
           this.camera.setTarget(target.bodyHitbox.getAbsolutePosition());
+          document.documentElement.dataset.enemyAttackTargetId = String(
+            target.id,
+          );
           this.gameplayTestActionComplete = true;
         }
+      } else if (
+        [
+          "sniperEnemy",
+          "shotgunEnemy",
+          "bossEnemy",
+        ].includes(this.gameplayTestScenario)
+        && currentAlive > 0
+      ) {
+        const enemyType = this.gameplayTestScenario === "sniperEnemy"
+          ? "sniper"
+          : this.gameplayTestScenario === "shotgunEnemy"
+            ? "shotgun"
+            : "boss";
+        const target = this.botManager?.bots.find(
+          (bot) => bot.isAlive && bot.enemyType === enemyType,
+        );
+        if (target) {
+          this.arrangeEnemyTypeCombatTest(target, enemyType);
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "botBlocked"
+        && currentAlive > 0
+      ) {
+        const target = this.botManager?.bots.find((bot) => bot.isAlive);
+        if (target) {
+          target.mesh.position.set(-11, 1.3, -7);
+          target.mesh.computeWorldMatrix(true);
+          target.bodyHitbox.computeWorldMatrix(true);
+          this.camera.position.set(-11, 1.7, 1);
+          this.camera.setTarget(target.bodyHitbox.getAbsolutePosition());
+          document.documentElement.dataset.blockedBotEvidence = JSON.stringify({
+            id: target.id,
+            start: {
+              x: target.mesh.position.x,
+              z: target.mesh.position.z,
+            },
+          });
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "attackSlots"
+        && currentAlive >= 4
+      ) {
+        this.arrangeOpenCombatTest();
+        this.gameplayTestActionComplete = true;
+      } else if (
+        this.gameplayTestScenario === "slotRelease"
+        && currentAlive >= 3
+      ) {
+        this.runAttackSlotReleaseTest(now);
       } else if (
         this.gameplayTestScenario === "headshotKill"
         && currentAlive > 0
@@ -743,21 +1067,142 @@ export class Game {
         const target = this.botManager?.bots.find((bot) => bot.isAlive);
         if (target) {
           const weaponStats = currentWeaponStats(this.shopState);
-          target.mesh.position.set(0, 1.3, 0);
+          target.mesh.position.set(0, 1.3, -3);
           target.health = weaponStats.headshotDamage;
           target.mesh.computeWorldMatrix(true);
+          target.headHitbox.computeWorldMatrix(true);
           const headPosition = target.headHitbox.getAbsolutePosition();
-          this.camera.position.set(0, headPosition.y, 3);
+          this.camera.position.set(0, headPosition.y, -8);
           this.camera.setTarget(headPosition);
+          this.camera.computeWorldMatrix();
           this.shoot(now);
           this.gameplayTestActionComplete = true;
         }
       } else if (
-        this.gameplayTestScenario === "finalFive"
+        this.gameplayTestScenario === "sniperRecharge"
         && currentAlive > 0
       ) {
-        this.botManager?.prepareFinalEnemiesForTest(now, 5);
-        this.gameplayTestActionComplete = true;
+        if (this.equippedWeapon !== "sniper") {
+          this.switchWeapon("sniper");
+          this.gameplayTestNextActionAt = now + 350;
+        } else if (!this.sniper.isRecharging) {
+          const target = this.botManager?.bots.find((bot) => bot.isAlive);
+          if (target) {
+            target.mesh.position.set(0, 1.3, -3);
+            target.mesh.computeWorldMatrix(true);
+            target.bodyHitbox.computeWorldMatrix(true);
+            const targetPosition = target.bodyHitbox.getAbsolutePosition();
+            this.camera.position.set(0, targetPosition.y, -8);
+            this.camera.setTarget(targetPosition);
+            this.camera.computeWorldMatrix();
+            this.shoot(now);
+            this.gameplayTestNextActionAt = now + 900;
+          }
+        } else {
+          this.switchWeapon("rifle");
+          document.documentElement.dataset.sniperRechargeEvidence = JSON.stringify({
+            shotsRemaining: this.sniper.shotsRemaining,
+            rechargeRemainingMs: this.sniper.getRechargeRemainingMs(now),
+          });
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "sniperScope"
+        && currentAlive > 0
+      ) {
+        if (this.equippedWeapon !== "sniper") {
+          this.switchWeapon("sniper");
+          this.gameplayTestNextActionAt = now + 350;
+        } else if (this.aimBlend < 0.95) {
+          this.aimDown = true;
+          this.gameplayTestNextActionAt = now + 50;
+        } else {
+          this.aimDown = true;
+          this.gameplayTestActionComplete = true;
+        }
+      } else if (
+        this.gameplayTestScenario === "sniperLongRange"
+        && currentAlive > 0
+      ) {
+        if (this.equippedWeapon !== "sniper") {
+          this.switchWeapon("sniper");
+          this.gameplayTestNextActionAt = now + 350;
+        } else if (this.aimBlend < 0.95) {
+          this.aimDown = true;
+          this.gameplayTestNextActionAt = now + 50;
+        } else {
+          const target = this.botManager?.bots.find((bot) => bot.isAlive);
+          if (target) {
+            this.botManager?.bots
+              .filter((bot) => bot.isAlive && bot !== target)
+              .forEach((bot, index) => {
+                bot.mesh.position.set(-18, 1.3, -4 + index * 4);
+                bot.mesh.computeWorldMatrix(true);
+                bot.bodyHitbox.computeWorldMatrix(true);
+                bot.headHitbox.computeWorldMatrix(true);
+              });
+            target.mesh.position.set(18, 1.3, 16);
+            target.mesh.computeWorldMatrix(true);
+            target.bodyHitbox.computeWorldMatrix(true);
+            target.headHitbox.computeWorldMatrix(true);
+            const targetPosition = target.bodyHitbox.getAbsolutePosition();
+            this.camera.position.set(18, targetPosition.y, -16);
+            this.camera.setTarget(targetPosition);
+            this.camera.computeWorldMatrix();
+            this.shoot(now);
+            this.gameplayTestActionComplete = true;
+          }
+        }
+      } else if (
+        this.gameplayTestScenario === "sniperNearMiss"
+        && currentAlive > 0
+      ) {
+        if (this.equippedWeapon !== "sniper") {
+          this.switchWeapon("sniper");
+          this.gameplayTestNextActionAt = now + 350;
+        } else {
+          const target = this.botManager?.bots.find((bot) => bot.isAlive);
+          if (target) {
+            this.botManager?.bots
+              .filter((bot) => bot.isAlive && bot !== target)
+              .forEach((bot, index) => {
+                bot.mesh.position.set(-18, 1.3, -4 + index * 4);
+                bot.mesh.computeWorldMatrix(true);
+                bot.bodyHitbox.computeWorldMatrix(true);
+                bot.headHitbox.computeWorldMatrix(true);
+              });
+            target.mesh.position.set(18, 1.3, 16);
+            target.mesh.computeWorldMatrix(true);
+            target.bodyHitbox.computeWorldMatrix(true);
+            target.headHitbox.computeWorldMatrix(true);
+            const targetPosition = target.bodyHitbox.getAbsolutePosition();
+            const remainingBefore = this.botManager?.remaining ?? 0;
+            this.camera.position.set(17, targetPosition.y, -16);
+            this.camera.setTarget(
+              new Vector3(17, targetPosition.y, targetPosition.z),
+            );
+            this.camera.computeWorldMatrix();
+            this.shoot(now);
+            document.documentElement.dataset.sniperNearMissEvidence = JSON.stringify({
+              targetId: target.id,
+              offsetFromTargetCenter: 1,
+              remainingBefore,
+              remainingAfter: this.botManager?.remaining ?? 0,
+              targetHealth: target.health,
+            });
+            this.gameplayTestActionComplete = true;
+          }
+        }
+      } else if (this.gameplayTestScenario === "finalFive") {
+        if (
+          (this.botManager?.remaining ?? 0) > 5
+          && currentAlive > 0
+        ) {
+          this.botManager?.eliminateActiveBots(now, 1);
+          this.gameplayTestNextActionAt = now + 100;
+        } else if ((this.botManager?.remaining ?? 0) <= 5) {
+          this.gameplayTestActionComplete = true;
+        }
       } else if (
         this.gameplayTestScenario === "victory"
         &&
@@ -774,7 +1219,129 @@ export class Game {
     this.showGameplayTestReport();
   }
 
+  private arrangeOpenCombatTest() {
+    const positions = [
+      new Vector3(18, 1.3, 8),
+      new Vector3(18, 1.3, 5),
+      new Vector3(18, 1.3, 2),
+      new Vector3(18, 1.3, -1),
+    ];
+    const bots = this.botManager?.bots
+      .filter((bot) => bot.isAlive)
+      .slice(0, positions.length) ?? [];
+    bots.forEach((bot, index) => {
+      bot.mesh.position.copyFrom(positions[index]);
+      bot.mesh.computeWorldMatrix(true);
+      bot.bodyHitbox.computeWorldMatrix(true);
+      bot.headHitbox.computeWorldMatrix(true);
+    });
+    this.camera.position.set(18, 1.7, -16);
+    this.camera.setTarget(new Vector3(18, 1.3, 4));
+    this.camera.computeWorldMatrix();
+    document.documentElement.dataset.attackSlotStartPositions = JSON.stringify(
+      bots.map((bot) => ({
+        id: bot.id,
+        x: bot.mesh.position.x,
+        z: bot.mesh.position.z,
+      })),
+    );
+  }
+
+  private arrangeEnemyTypeCombatTest(
+    target: NonNullable<BotManager["bots"][number]>,
+    enemyType: EnemyType,
+  ) {
+    this.botManager?.bots
+      .filter((bot) => bot.isAlive && bot !== target)
+      .forEach((bot, index) => {
+        bot.mesh.position.x = -18;
+        bot.mesh.position.z = -10 + index * 3;
+        bot.mesh.computeWorldMatrix(true);
+        bot.bodyHitbox.computeWorldMatrix(true);
+        bot.headHitbox.computeWorldMatrix(true);
+      });
+    target.mesh.position.x = 18;
+    target.mesh.position.z = 16;
+    target.mesh.computeWorldMatrix(true);
+    target.bodyHitbox.computeWorldMatrix(true);
+    target.headHitbox.computeWorldMatrix(true);
+    this.camera.position.set(
+      18,
+      GAME_CONFIG.player.standingHeight,
+      enemyType === "sniper"
+        ? -16
+        : enemyType === "shotgun"
+          ? 8
+          : 12,
+    );
+    this.camera.setTarget(target.bodyHitbox.getAbsolutePosition());
+    this.camera.computeWorldMatrix();
+    this.playerController?.reset();
+    document.documentElement.dataset.enemyTypeTestTarget = JSON.stringify({
+      id: target.id,
+      enemyType,
+      initialDistance: horizontalDistance(
+        target.mesh.position,
+        this.camera.position,
+      ),
+    });
+  }
+
+  private runAttackSlotReleaseTest(now: number) {
+    if (this.gameplayTestStage === 0) {
+      this.arrangeOpenCombatTest();
+      this.gameplayTestStage = 1;
+      this.gameplayTestNextActionAt = now + 1_600;
+      return;
+    }
+    if (this.gameplayTestStage === 1) {
+      const before = this.botManager?.shooterIds ?? [];
+      const shootingBot = this.botManager?.bots.find(
+        (bot) => bot.isAlive && before.includes(bot.id),
+      );
+      if (!shootingBot) {
+        this.gameplayTestNextActionAt = now + 100;
+        return;
+      }
+      this.botManager?.damageBot(
+        shootingBot,
+        shootingBot.health,
+        now,
+      );
+      document.documentElement.dataset.slotReleaseEvidence = JSON.stringify({
+        before,
+        killed: shootingBot.id,
+        after: [],
+      });
+      this.gameplayTestStage = 2;
+      this.gameplayTestNextActionAt = now + 150;
+      return;
+    }
+    const evidence = JSON.parse(
+      document.documentElement.dataset.slotReleaseEvidence ?? "{}",
+    ) as {
+      before?: number[];
+      killed?: number;
+      after?: number[];
+    };
+    evidence.after = this.botManager?.shooterIds ?? [];
+    document.documentElement.dataset.slotReleaseEvidence = JSON.stringify(
+      evidence,
+    );
+    this.gameplayTestActionComplete = true;
+  }
+
   private showGameplayTestReport() {
+    document.documentElement.dataset.botCombatEvidence = JSON.stringify(
+      this.botManager?.combatDebugBots ?? [],
+    );
+    document.documentElement.dataset.scopeEvidence = JSON.stringify({
+      equippedWeapon: this.equippedWeapon,
+      aiming: this.aimDown,
+      aimBlend: this.aimBlend,
+      cameraFovDegrees: this.camera.fov * 180 / Math.PI,
+      sniperModelVisible: this.sniperRig?.isEnabled() ?? false,
+    });
     this.ui.showGameplayTestReport({
       scenario: this.gameplayTestScenario,
       phase: this.phase,
@@ -1007,6 +1574,49 @@ export class Game {
     this.pendingLookDelta = { x: 0, y: 0 };
   }
 
+  private switchWeapon(weapon: PlayerWeaponKind) {
+    if (
+      !this.matchActive
+      || this.activeShop
+      || this.equippedWeapon === weapon
+    ) {
+      return;
+    }
+    this.equippedWeapon = weapon;
+    this.weaponSwitchStartedAt = performance.now();
+    this.mouseDown = false;
+    this.recoil = 0;
+    this.audio.playWeaponSwitch();
+    this.rifleRig?.setEnabled(weapon === "rifle");
+    this.sniperRig?.setEnabled(weapon === "sniper");
+    if (weapon === "sniper") {
+      const rechargeSeconds = Math.ceil(
+        this.sniper.getRechargeRemainingMs(performance.now()) / 1000,
+      );
+      this.feedback = this.sniper.isRecharging
+        ? `Sniper recharging · ${rechargeSeconds}s`
+        : `Sniper equipped · ${this.sniper.shotsRemaining} shots`;
+    } else {
+      this.feedback = "Assault Rifle equipped";
+    }
+  }
+
+  private getWeaponAmmoText(now: number) {
+    if (this.equippedWeapon === "rifle") {
+      return (
+        `${this.weapon.magazine} / `
+        + `${currentWeaponStats(this.shopState).magazineSize}`
+      );
+    }
+    if (this.sniper.isRecharging) {
+      const seconds = Math.ceil(
+        this.sniper.getRechargeRemainingMs(now) / 1000,
+      );
+      return `RECHARGE ${seconds}s`;
+    }
+    return `${this.sniper.shotsRemaining} / ${SNIPER_CONFIG.maximumShots} SHOTS`;
+  }
+
   private updateAim(deltaSeconds: number) {
     const target = (
       this.aimDown
@@ -1014,9 +1624,16 @@ export class Game {
     ) ? 1 : 0;
     this.aimBlend += (target - this.aimBlend) * Math.min(1, deltaSeconds * 8);
     const normalFov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
-    const aimedFov = 42 * Math.PI / 180;
+    const aimedFov = (
+      this.equippedWeapon === "sniper"
+        ? 22
+        : 42
+    ) * Math.PI / 180;
     this.camera.fov = normalFov + (aimedFov - normalFov) * this.aimBlend;
-    this.ui.setAiming(this.aimBlend > 0.08);
+    this.ui.setAiming(
+      this.aimBlend > 0.08,
+      this.equippedWeapon === "sniper",
+    );
   }
 
   private cancelAim() {
@@ -1025,6 +1642,35 @@ export class Game {
     this.ui.setAiming(false);
     if (this.camera) {
       this.camera.fov = GAME_CONFIG.player.cameraFovDegrees * Math.PI / 180;
+    }
+  }
+
+  private updateWeaponPresentation(now: number) {
+    const switchProgress = Math.min(
+      1,
+      Math.max(0, (now - this.weaponSwitchStartedAt) / 320),
+    );
+    const switchDrop = Math.sin(switchProgress * Math.PI) * 0.42;
+    const rifleActive = this.equippedWeapon === "rifle";
+    const sniperScopeClear = !rifleActive && this.aimBlend >= 0.82;
+    this.rifleRig?.setEnabled(rifleActive);
+    this.sniperRig?.setEnabled(!rifleActive && !sniperScopeClear);
+
+    if (this.rifleRig) {
+      this.rifleRig.position.set(
+        0.42 * (1 - this.aimBlend),
+        -0.38 + this.aimBlend * 0.22 - this.recoil * 1.8 - switchDrop,
+        0.72 - this.aimBlend * 0.12,
+      );
+      this.rifleRig.rotation.z = (1 - switchProgress) * 0.16;
+    }
+    if (this.sniperRig) {
+      this.sniperRig.position.set(
+        0.46 * (1 - this.aimBlend),
+        -0.43 + this.aimBlend * 0.26 - this.recoil * 1.4 - switchDrop,
+        0.84 - this.aimBlend * 0.18,
+      );
+      this.sniperRig.rotation.z = (1 - switchProgress) * -0.18;
     }
   }
 
@@ -1236,9 +1882,9 @@ export class Game {
       { name: "cargo south lane", x: -8, y: 2, z: -7 },
       { name: "cargo north lane", x: -8, y: 2, z: 15 },
       { name: "central combat lane", x: 1, y: 2, z: -7 },
-      { name: "tower south approach", x: 8, y: 2, z: -4 },
-      { name: "tower east approach", x: 15, y: 2, z: 8 },
-      { name: "bridge sightline", x: 1, y: 2, z: 8 },
+      { name: "platform south approach", x: 8, y: 2, z: -4 },
+      { name: "platform east approach", x: 15, y: 2, z: 5 },
+      { name: "central north lane", x: 1, y: 2, z: 8 },
       { name: "north entry lane", x: 0, y: 2, z: 16 },
       { name: "east entry lane", x: 16, y: 2, z: 0 },
     ];
@@ -1339,16 +1985,16 @@ export class Game {
     };
     const elevationRoutes = [
       runElevationRoute(
-        "south tower broad ramp",
+        "command platform south ramp",
         new Vector3(8, GAME_CONFIG.player.standingHeight, -3.7),
         0,
         [{ frames: 90, input: forward }],
       ),
       runElevationRoute(
-        "north tower east ramp",
-        new Vector3(17.2, GAME_CONFIG.player.standingHeight, 13),
-        -Math.PI / 2,
-        [{ frames: 90, input: forward }],
+        "command platform west ramp",
+        new Vector3(0.2, GAME_CONFIG.player.standingHeight, 5),
+        Math.PI / 2,
+        [{ frames: 125, input: forward }],
       ),
     ];
     const runSurfaceJump = (
@@ -1403,13 +2049,8 @@ export class Game {
         0.9,
       ),
       runSurfaceJump(
-        "south tower platform",
+        "command platform",
         new Vector3(8, 4.925, 5),
-        0.9,
-      ),
-      runSurfaceJump(
-        "north tower platform",
-        new Vector3(8, 4.925, 13),
         0.9,
       ),
     ];
@@ -1637,6 +2278,7 @@ export class Game {
     this.clearLookInput();
     this.clearMovementInput();
     this.audio.setPaused(true);
+    this.ui.renderEnemyIndicators([]);
     document.exitPointerLock();
     this.ui.showPause({
       onResume: () => this.resumeMatch(),
@@ -1670,10 +2312,19 @@ export class Game {
   private shoot(now: number) {
     if (this.phase !== "active") return;
     if (this.activeShop) return;
+    if (now - this.weaponSwitchStartedAt < 260) return;
     if (isInsideSafeZone(this.camera.position)) {
       this.feedback = "SAFE ZONE — weapons disabled";
       return;
     }
+    if (this.equippedWeapon === "sniper") {
+      this.shootSniper(now);
+      return;
+    }
+    this.shootRifle(now);
+  }
+
+  private shootRifle(now: number) {
     if (this.weapon.magazine === 0) {
       this.audio.play("empty");
       this.reload();
@@ -1681,6 +2332,13 @@ export class Game {
     }
     const weaponStats = currentWeaponStats(this.shopState);
     if (!this.weapon.canFire(now, weaponStats.roundsPerMinute)) return;
+    this.camera.getViewMatrix(true);
+    const forwardRay = this.camera.getForwardRay(weaponStats.range);
+    const direction = forwardRay.direction.clone();
+    const spread = weaponStats.spread + this.recoil * 0.18;
+    direction.x += (Math.random() - 0.5) * spread;
+    direction.y += (Math.random() - 0.5) * spread;
+    direction.normalize();
     this.weapon.fire(now);
     this.shotsFired += 1;
     this.botManager?.reportPlayerGunshot(this.camera.position, now);
@@ -1688,18 +2346,15 @@ export class Game {
     this.recoil = Math.min(0.12, this.recoil + GAME_CONFIG.weapon.recoilPerShot);
     this.camera.rotation.x -= GAME_CONFIG.weapon.recoilPerShot;
     this.flashMuzzle();
-    const direction = this.camera.getDirection(Vector3.Forward());
-    const spread = weaponStats.spread + this.recoil * 0.18;
-    direction.x += (Math.random() - 0.5) * spread;
-    direction.y += (Math.random() - 0.5) * spread;
     const ray = new Ray(
-      this.camera.position,
-      direction.normalize(),
+      forwardRay.origin,
+      direction,
       weaponStats.range,
     );
     const hit = this.scene.pickWithRay(ray, (mesh) => (
       this.botManager?.getBotByMesh(mesh) !== undefined
       || this.cover.some((wall) => wall === mesh)
+      || this.walkableSurfaces.includes(mesh)
       || this.pushablePropController?.hasMesh(mesh) === true
     ));
     const bot = hit?.pickedMesh ? this.botManager?.getBotByMesh(hit.pickedMesh) : undefined;
@@ -1714,10 +2369,21 @@ export class Game {
         bot,
         damage,
         now,
+        direction,
+        false,
       ) ?? false;
       this.audio.play("hit", bot.mesh.position);
+      this.combatEffectManager?.spawnBlood(
+        hit!.pickedPoint!,
+        direction,
+        now,
+        defeated,
+      );
       if (defeated) {
-        const coinReward = getBotKillCoinReward(headshot);
+        const coinReward = getBotKillCoinReward(
+          bot.enemyType,
+          headshot,
+        );
         this.shopState = awardCoins(this.shopState, coinReward);
         this.feedback = (
           `${headshot ? "HEADSHOT — " : ""}Enemy eliminated · `
@@ -1736,9 +2402,117 @@ export class Game {
     }
   }
 
-  private flashMuzzle() {
-    this.muzzleFlash?.setEnabled(true);
-    window.setTimeout(() => this.muzzleFlash?.setEnabled(false), 45);
+  private shootSniper(now: number) {
+    if (this.sniper.isRecharging) {
+      const seconds = Math.ceil(
+        this.sniper.getRechargeRemainingMs(now) / 1000,
+      );
+      this.feedback = `Sniper recharging · ${seconds}s · Rifle available on 1`;
+      this.audio.play("empty");
+      return;
+    }
+    if (!this.sniper.fire(now)) return;
+
+    this.camera.getViewMatrix(true);
+    const forwardRay = this.camera.getForwardRay(SNIPER_CONFIG.range);
+    const direction = forwardRay.direction.clone().normalize();
+    const ray = new Ray(
+      forwardRay.origin,
+      direction,
+      SNIPER_CONFIG.range,
+    );
+    this.shotsFired += 1;
+    this.botManager?.reportPlayerGunshot(this.camera.position, now);
+    this.audio.playSniperShot(this.currentSurface === "indoor");
+    this.recoil = Math.min(0.2, this.recoil + SNIPER_CONFIG.recoil);
+    this.camera.rotation.x -= SNIPER_CONFIG.recoil;
+    this.flashMuzzle("sniper");
+    const hit = this.scene.pickWithRay(ray, (mesh) => (
+      this.botManager?.getBotByMesh(mesh) !== undefined
+      || this.cover.includes(mesh)
+      || this.walkableSurfaces.includes(mesh)
+      || this.pushablePropController?.hasMesh(mesh) === true
+    ));
+    if (this.gameplayTestMode) {
+      document.documentElement.dataset.sniperShotEvidence = JSON.stringify({
+        origin: {
+          x: ray.origin.x,
+          y: ray.origin.y,
+          z: ray.origin.z,
+        },
+        direction: {
+          x: ray.direction.x,
+          y: ray.direction.y,
+          z: ray.direction.z,
+        },
+        rayLength: ray.length,
+        hitMesh: hit?.pickedMesh?.name ?? null,
+        hitDistance: hit?.distance ?? null,
+        hitBotId: hit?.pickedMesh
+          ? this.botManager?.getBotByMesh(hit.pickedMesh)?.id ?? null
+          : null,
+      });
+    }
+    const bot = hit?.pickedMesh
+      ? this.botManager?.getBotByMesh(hit.pickedMesh)
+      : undefined;
+    if (bot && hit?.pickedPoint) {
+      this.shotsHit += 1;
+      const headshot = hit.pickedMesh?.metadata?.hitZone === "head";
+      const defeated = this.botManager?.damageBot(
+        bot,
+        SNIPER_CONFIG.damage,
+        now,
+        direction,
+        true,
+      ) ?? false;
+      this.audio.playSniperImpact(hit.pickedPoint);
+      this.combatEffectManager?.spawnBlood(
+        hit.pickedPoint,
+        direction,
+        now,
+        defeated,
+      );
+      if (defeated) {
+        const coinReward = getBotKillCoinReward(
+          bot.enemyType,
+          headshot,
+        );
+        this.shopState = awardCoins(this.shopState, coinReward);
+        this.feedback = (
+          `SNIPER ELIMINATION · +${coinReward} coins · `
+          + `${this.botManager?.remaining ?? 0} remaining`
+        );
+      } else {
+        this.feedback = "Sniper hit · 200 damage";
+      }
+      this.impact(hit.pickedPoint, true, "concrete");
+    } else if (hit?.pickedPoint) {
+      const bulletMaterial = bulletMaterialOf(hit.pickedMesh ?? undefined);
+      if (hit.pickedMesh && this.pushablePropController?.hasMesh(hit.pickedMesh)) {
+        this.pushablePropController.applyBulletImpulse(
+          hit.pickedMesh,
+          direction.scale(1.8),
+        );
+      }
+      this.audio.playSniperImpact(hit.pickedPoint);
+      this.impact(hit.pickedPoint, false, bulletMaterial);
+    }
+
+    if (this.sniper.isRecharging) {
+      this.feedback = "Sniper depleted · 60s recharge started · Rifle available on 1";
+    }
+  }
+
+  private flashMuzzle(weapon: PlayerWeaponKind = "rifle") {
+    const flash = weapon === "sniper"
+      ? this.sniperMuzzleFlash
+      : this.rifleMuzzleFlash;
+    flash?.setEnabled(true);
+    window.setTimeout(
+      () => flash?.setEnabled(false),
+      weapon === "sniper" ? 80 : 45,
+    );
   }
 
   private impact(position: Vector3, combatant: boolean, bulletMaterial: BulletMaterial) {
@@ -1766,6 +2540,12 @@ export class Game {
       this.activeShop
       || isInsideSafeZone(this.camera.position)
     ) return;
+    if (this.equippedWeapon === "sniper") {
+      this.feedback = this.sniper.isRecharging
+        ? "Sniper recharges automatically · Rifle available on 1"
+        : "Sniper has no manual reload";
+      return;
+    }
     if (this.weapon.reload(
       () => {
         this.feedback = "Reloaded";
@@ -1816,7 +2596,10 @@ export class Game {
   private clearCombatEffects() {
     this.combatEffects.forEach((effect) => effect.dispose());
     this.combatEffects.clear();
-    this.muzzleFlash?.setEnabled(false);
+    this.combatEffectManager?.clear();
+    this.rifleMuzzleFlash?.setEnabled(false);
+    this.sniperMuzzleFlash?.setEnabled(false);
+    this.ui.renderEnemyIndicators([]);
   }
 
   private finish(result: "Victory" | "Defeat") {

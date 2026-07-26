@@ -33,9 +33,7 @@ export const GAME_CONFIG = {
     healthPerSecond: 20,
   },
   bot: {
-    detectionRange: 30,
-    fieldOfViewRadians: 1.85,
-    firingAngleRadians: 0.18,
+    detectionRange: 42,
     gravity: -24,
     perceptionSeconds: 0.2,
     personalSpace: 2.2,
@@ -43,47 +41,49 @@ export const GAME_CONFIG = {
 } as const;
 
 export type EnemyType =
-  | "rifle"
+  | "normal"
   | "armoured"
   | "smg"
-  | "heavy-rifle"
   | "shotgun"
-  | "boss"
   | "sniper"
-  | "elite-sniper";
+  | "boss";
 
-export type EnemyWeaponType = "rifle" | "smg" | "shotgun" | "sniper";
+export type EnemyAttackKind =
+  | "rifle"
+  | "smg"
+  | "shotgun"
+  | "sniper"
+  | "melee";
 
 export interface EnemyWeaponConfig {
-  type: EnemyWeaponType;
+  kind: EnemyAttackKind;
   damagePerHit: number;
-  pellets: number;
+  maximumHealthDamageFraction: number;
   range: number;
+  minimumRange: number;
+  damageFalloffStart: number;
   magazineSize: number;
   reloadMs: number;
-  roundsPerMinuteMultiplier: number;
+  cooldownMs?: readonly [minimum: number, maximum: number];
+  warningMs?: number;
 }
 
-interface EnemyArchetypeDefinition {
-  displayName: string;
-  unlockWave: number;
-  baseHealth: number;
-  healthOffsetFromNormal: number;
-  movementMultiplier: number;
-  accuracyBonus: number;
-  reactionTimeModifier: number;
-  preferredDistance: number;
-  weapon: EnemyWeaponConfig;
-  boss: boolean;
-}
-
-export interface EnemyArchetype extends EnemyArchetypeDefinition {
+export interface EnemyArchetype {
   type: EnemyType;
+  displayName: string;
+  role: string;
   health: number;
   movementMultiplier: number;
   accuracy: number;
   reactionSeconds: number;
+  preferredDistance: number;
   roundsPerMinute: number;
+  coinReward: number;
+  collision: {
+    height: number;
+    radius: number;
+  };
+  weapon: EnemyWeaponConfig;
 }
 
 export interface WaveConfig {
@@ -92,50 +92,265 @@ export interface WaveConfig {
   totalEnemies: number;
   maximumAlive: number;
   maximumShooters: number;
-  movementMultiplier: number;
-  reactionSeconds: number;
-  effectiveAccuracy: number;
-  normalHealth: number;
-  durabilityTier: number;
+  enemyRoster: EnemyType[];
+  maximumActiveByType: Record<EnemyType, number>;
   playerRegenerationDelayMs: number;
-  roundsPerMinute: number;
   searchSeconds: number;
   searchRadius: number;
   perceptionMultiplier: number;
-  aggressionMultiplier: number;
   replacementDelayMs: number;
-  flankingEnabled: boolean;
-  milestoneNotice?: string;
 }
 
 export const ENDLESS_WAVE_CONFIG = {
-  initialTotalEnemies: 6,
-  enemiesAddedPerWave: 2,
-  maximumTotalEnemies: 24,
-  maximumActiveEnemies: 6,
-  baseMovementMultiplier: 0.85,
-  baseAccuracy: 0.28,
-  baseReactionSeconds: 1.5,
-  baseRoundsPerMinute: 120,
-  baseNormalHealth: 100,
-  upgradeInterval: 5,
-  upgradeCycleWaves: 30,
-  movementUpgradeMultiplier: 1.05,
-  accuracyUpgrade: 0.02,
-  reactionUpgradeSeconds: 0.05,
-  fireRateUpgradeMultiplier: 1.05,
-  healthUpgrade: 20,
-  flankingWave: 30,
-  finalEnemyRevealCount: 5,
-  safetyCaps: {
-    accuracy: 0.85,
-    reactionSeconds: 0.25,
-    movementMultiplier: 1.4,
-    roundsPerMinute: 300,
-    normalBulletDamage: 20,
-    activeEnemies: 6,
-  },
+  initialTotalEnemies: 8,
+  enemiesAddedPerWave: 4,
+  maximumTotalEnemies: 120,
+  initialActiveEnemies: 3,
+  completedWavesPerActiveIncrease: 3,
+  maximumActiveEnemies: 12,
+  replacementDelayMs: 1_000,
+  bossFirstWave: 15,
+  bossWaveInterval: 10,
 } as const;
+
+export const ATTACKER_LIMITS = [
+  {
+    firstWave: 1,
+    lastWave: 6,
+    maximumShooters: 2,
+  },
+  {
+    firstWave: 7,
+    lastWave: 15,
+    maximumShooters: 3,
+  },
+  {
+    firstWave: 16,
+    lastWave: Infinity,
+    maximumShooters: 4,
+  },
+] as const;
+
+export const ENEMY_INTRODUCTION = [
+  {
+    firstWave: 1,
+    lastWave: 3,
+    weights: {
+      normal: 1,
+      armoured: 0,
+      smg: 0,
+      shotgun: 0,
+      sniper: 0,
+    },
+  },
+  {
+    firstWave: 4,
+    lastWave: 6,
+    weights: {
+      normal: 0.75,
+      armoured: 0.25,
+      smg: 0,
+      shotgun: 0,
+      sniper: 0,
+    },
+  },
+  {
+    firstWave: 7,
+    lastWave: 9,
+    weights: {
+      normal: 0.6,
+      armoured: 0.2,
+      smg: 0.2,
+      shotgun: 0,
+      sniper: 0,
+    },
+  },
+  {
+    firstWave: 10,
+    lastWave: 12,
+    weights: {
+      normal: 0.5,
+      armoured: 0.2,
+      smg: 0.2,
+      shotgun: 0.1,
+      sniper: 0,
+    },
+  },
+  {
+    firstWave: 13,
+    lastWave: Infinity,
+    weights: {
+      normal: 0.45,
+      armoured: 0.2,
+      smg: 0.2,
+      shotgun: 0.1,
+      sniper: 0.05,
+    },
+  },
+] as const;
+
+export const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetype> = {
+  normal: {
+    type: "normal",
+    displayName: "Rifle",
+    role: "Balanced standard enemy",
+    health: 100,
+    movementMultiplier: 1,
+    accuracy: 0.65,
+    reactionSeconds: 0.8,
+    preferredDistance: 14,
+    roundsPerMinute: 120,
+    coinReward: 10,
+    collision: {
+      height: 2.6,
+      radius: 0.42,
+    },
+    weapon: {
+      kind: "rifle",
+      damagePerHit: 12.5,
+      maximumHealthDamageFraction: 0,
+      range: 36,
+      minimumRange: 0,
+      damageFalloffStart: 36,
+      magazineSize: 24,
+      reloadMs: 2_100,
+    },
+  },
+  armoured: {
+    type: "armoured",
+    displayName: "Armoured Rifle",
+    role: "Slow tank enemy",
+    health: 200,
+    movementMultiplier: 0.6,
+    accuracy: 0.65,
+    reactionSeconds: 0.8,
+    preferredDistance: 14,
+    roundsPerMinute: 120,
+    coinReward: 20,
+    collision: {
+      height: 2.8,
+      radius: 0.5,
+    },
+    weapon: {
+      kind: "rifle",
+      damagePerHit: 12.5,
+      maximumHealthDamageFraction: 0,
+      range: 36,
+      minimumRange: 0,
+      damageFalloffStart: 36,
+      magazineSize: 30,
+      reloadMs: 2_400,
+    },
+  },
+  smg: {
+    type: "smg",
+    displayName: "SMG",
+    role: "Rapid-fire pressure enemy",
+    health: 100,
+    movementMultiplier: 1,
+    accuracy: 0.7,
+    reactionSeconds: 0.8,
+    preferredDistance: 11,
+    roundsPerMinute: 450,
+    coinReward: 12,
+    collision: {
+      height: 2.5,
+      radius: 0.39,
+    },
+    weapon: {
+      kind: "smg",
+      damagePerHit: 10,
+      maximumHealthDamageFraction: 0,
+      range: 30,
+      minimumRange: 0,
+      damageFalloffStart: 30,
+      magazineSize: 32,
+      reloadMs: 1_800,
+    },
+  },
+  shotgun: {
+    type: "shotgun",
+    displayName: "Shotgun",
+    role: "Aggressive close-range enemy",
+    health: 150,
+    movementMultiplier: 1.2,
+    accuracy: 0.75,
+    reactionSeconds: 0.6,
+    preferredDistance: 4.5,
+    roundsPerMinute: 15,
+    coinReward: 20,
+    collision: {
+      height: 2.7,
+      radius: 0.47,
+    },
+    weapon: {
+      kind: "shotgun",
+      damagePerHit: 0,
+      maximumHealthDamageFraction: 0.5,
+      range: 7.5,
+      minimumRange: 0,
+      damageFalloffStart: 4,
+      magazineSize: 5,
+      reloadMs: 2_700,
+      cooldownMs: [4_000, 6_000],
+    },
+  },
+  sniper: {
+    type: "sniper",
+    displayName: "Sniper",
+    role: "Fragile long-range threat",
+    health: 50,
+    movementMultiplier: 1.1,
+    accuracy: 0.9,
+    reactionSeconds: 0.5,
+    preferredDistance: 28,
+    roundsPerMinute: 10,
+    coinReward: 25,
+    collision: {
+      height: 2.5,
+      radius: 0.38,
+    },
+    weapon: {
+      kind: "sniper",
+      damagePerHit: 0,
+      maximumHealthDamageFraction: 0.95,
+      range: 46,
+      minimumRange: 12,
+      damageFalloffStart: 46,
+      magazineSize: 5,
+      reloadMs: 3_200,
+      cooldownMs: [6_000, 8_000],
+      warningMs: 850,
+    },
+  },
+  boss: {
+    type: "boss",
+    displayName: "Boss",
+    role: "Fast melee boss",
+    health: 300,
+    movementMultiplier: 1.5,
+    accuracy: 0.85,
+    reactionSeconds: 0.3,
+    preferredDistance: 1.45,
+    roundsPerMinute: 20,
+    coinReward: 100,
+    collision: {
+      height: 3.5,
+      radius: 0.62,
+    },
+    weapon: {
+      kind: "melee",
+      damagePerHit: 0,
+      maximumHealthDamageFraction: 0.65,
+      range: 2.25,
+      minimumRange: 0,
+      damageFalloffStart: 2.25,
+      magazineSize: 1,
+      reloadMs: 1,
+      cooldownMs: [2_000, 4_000],
+    },
+  },
+};
 
 export const PLAYER_WEAPON_DAMAGE = {
   "assault-rifle": {
@@ -144,325 +359,88 @@ export const PLAYER_WEAPON_DAMAGE = {
   },
 } as const;
 
-const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetypeDefinition> = {
-  rifle: {
-    displayName: "Rifle",
-    unlockWave: 1,
-    baseHealth: 100,
-    healthOffsetFromNormal: 0,
-    movementMultiplier: 1,
-    accuracyBonus: 0,
-    reactionTimeModifier: 0,
-    preferredDistance: 14,
-    weapon: {
-      type: "rifle",
-      damagePerHit: 10,
-      pellets: 1,
-      range: 34,
-      magazineSize: 24,
-      reloadMs: 2_100,
-      roundsPerMinuteMultiplier: 1,
-    },
-    boss: false,
-  },
-  armoured: {
-    displayName: "Armoured Rifle",
-    unlockWave: 20,
-    baseHealth: 150,
-    healthOffsetFromNormal: 50,
-    movementMultiplier: 0.88,
-    accuracyBonus: 0,
-    reactionTimeModifier: 0.08,
-    preferredDistance: 14,
-    weapon: {
-      type: "rifle",
-      damagePerHit: 10,
-      pellets: 1,
-      range: 34,
-      magazineSize: 28,
-      reloadMs: 2_250,
-      roundsPerMinuteMultiplier: 0.9,
-    },
-    boss: false,
-  },
-  smg: {
-    displayName: "SMG",
-    unlockWave: 40,
-    baseHealth: 100,
-    healthOffsetFromNormal: 0,
-    movementMultiplier: 1.15,
-    accuracyBonus: -0.03,
-    reactionTimeModifier: -0.05,
-    preferredDistance: 9,
-    weapon: {
-      type: "smg",
-      damagePerHit: 7,
-      pellets: 1,
-      range: 24,
-      magazineSize: 32,
-      reloadMs: 1_700,
-      roundsPerMinuteMultiplier: 2,
-    },
-    boss: false,
-  },
-  "heavy-rifle": {
-    displayName: "Veteran Rifle",
-    unlockWave: 50,
-    baseHealth: 120,
-    healthOffsetFromNormal: 20,
-    movementMultiplier: 0.96,
-    accuracyBonus: 0.1,
-    reactionTimeModifier: -0.1,
-    preferredDistance: 17,
-    weapon: {
-      type: "rifle",
-      damagePerHit: 14,
-      pellets: 1,
-      range: 40,
-      magazineSize: 24,
-      reloadMs: 2_000,
-      roundsPerMinuteMultiplier: 0.92,
-    },
-    boss: false,
-  },
-  shotgun: {
-    displayName: "Shotgun",
-    unlockWave: 60,
-    baseHealth: 110,
-    healthOffsetFromNormal: 10,
-    movementMultiplier: 1.05,
-    accuracyBonus: 0.04,
-    reactionTimeModifier: -0.05,
-    preferredDistance: 7,
-    weapon: {
-      type: "shotgun",
-      damagePerHit: 9,
-      pellets: 6,
-      range: 18,
-      magazineSize: 6,
-      reloadMs: 2_600,
-      roundsPerMinuteMultiplier: 0.5,
-    },
-    boss: false,
-  },
-  boss: {
-    displayName: "Boss",
-    unlockWave: 70,
-    baseHealth: 300,
-    healthOffsetFromNormal: 0,
-    movementMultiplier: 0.82,
-    accuracyBonus: 0.14,
-    reactionTimeModifier: -0.2,
-    preferredDistance: 18,
-    weapon: {
-      type: "rifle",
-      damagePerHit: 18,
-      pellets: 1,
-      range: 44,
-      magazineSize: 36,
-      reloadMs: 1_850,
-      roundsPerMinuteMultiplier: 1.15,
-    },
-    boss: true,
-  },
-  sniper: {
-    displayName: "Sniper",
-    unlockWave: 80,
-    baseHealth: 120,
-    healthOffsetFromNormal: 20,
-    movementMultiplier: 0.82,
-    accuracyBonus: 0.16,
-    reactionTimeModifier: 0.15,
-    preferredDistance: 30,
-    weapon: {
-      type: "sniper",
-      damagePerHit: 40,
-      pellets: 1,
-      range: 64,
-      magazineSize: 5,
-      reloadMs: 2_900,
-      roundsPerMinuteMultiplier: 0.36,
-    },
-    boss: false,
-  },
-  "elite-sniper": {
-    displayName: "Elite Sniper",
-    unlockWave: 80,
-    baseHealth: 220,
-    healthOffsetFromNormal: 0,
-    movementMultiplier: 0.9,
-    accuracyBonus: 0.22,
-    reactionTimeModifier: -0.15,
-    preferredDistance: 34,
-    weapon: {
-      type: "sniper",
-      damagePerHit: 0,
-      pellets: 1,
-      range: 72,
-      magazineSize: 4,
-      reloadMs: 3_100,
-      roundsPerMinuteMultiplier: 0.3,
-    },
-    boss: false,
-  },
-};
-
-const MILESTONE_NOTICES: Record<number, string> = {
-  10: "Enemy reinforcement capacity increased",
-  20: "Armoured rifle units entered the district",
-  30: "Enemy squads learned basic flanking routes",
-  40: "Fast SMG units entered the district",
-  50: "Veteran rifle units entered the district",
-  60: "Close-range shotgun units entered the district",
-  70: "Boss unit detected",
-  80: "Elite sniper detected",
-};
-
 export function createWaveConfig(number: number): WaveConfig {
   const waveNumber = Math.max(1, Math.floor(number));
-  const movementUpgrades = countCycleStep(waveNumber, 5);
-  const accuracyUpgrades = countCycleStep(waveNumber, 10);
-  const reactionUpgrades = countCycleStep(waveNumber, 15);
-  const fireRateUpgrades = countCycleStep(waveNumber, 20);
-  const healthUpgrades = countCycleStep(waveNumber, 25);
-  const durabilityUpgrades = countCycleStep(waveNumber, 30);
-  const normalHealth = Math.min(
-    Number.MAX_SAFE_INTEGER,
-    ENDLESS_WAVE_CONFIG.baseNormalHealth
-      + healthUpgrades * ENDLESS_WAVE_CONFIG.healthUpgrade,
+  const totalEnemies = Math.min(
+    ENDLESS_WAVE_CONFIG.maximumTotalEnemies,
+    ENDLESS_WAVE_CONFIG.initialTotalEnemies
+      + (waveNumber - 1) * ENDLESS_WAVE_CONFIG.enemiesAddedPerWave,
   );
+  const maximumAlive = Math.min(
+    ENDLESS_WAVE_CONFIG.maximumActiveEnemies,
+    ENDLESS_WAVE_CONFIG.initialActiveEnemies
+      + Math.floor(
+        (waveNumber - 1)
+          / ENDLESS_WAVE_CONFIG.completedWavesPerActiveIncrease,
+      ),
+  );
+  const attackerLimit = ATTACKER_LIMITS.find(
+    (limit) => (
+      waveNumber >= limit.firstWave
+      && waveNumber <= limit.lastWave
+    ),
+  )!;
 
   return {
     number: waveNumber,
     name: `Wave ${waveNumber}`,
-    totalEnemies: Math.min(
-      ENDLESS_WAVE_CONFIG.maximumTotalEnemies,
-      ENDLESS_WAVE_CONFIG.initialTotalEnemies
-        + (waveNumber - 1) * ENDLESS_WAVE_CONFIG.enemiesAddedPerWave,
-    ),
-    maximumAlive: waveNumber <= 3
-      ? 4
-      : waveNumber <= 6
-        ? 5
-        : ENDLESS_WAVE_CONFIG.maximumActiveEnemies,
-    maximumShooters: waveNumber <= 20 ? 2 : waveNumber <= 50 ? 3 : 4,
-    movementMultiplier: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.movementMultiplier,
-      ENDLESS_WAVE_CONFIG.baseMovementMultiplier
-        * ENDLESS_WAVE_CONFIG.movementUpgradeMultiplier ** movementUpgrades,
-    ),
-    reactionSeconds: Math.max(
-      ENDLESS_WAVE_CONFIG.safetyCaps.reactionSeconds,
-      ENDLESS_WAVE_CONFIG.baseReactionSeconds
-        - reactionUpgrades * ENDLESS_WAVE_CONFIG.reactionUpgradeSeconds,
-    ),
-    effectiveAccuracy: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.accuracy,
-      ENDLESS_WAVE_CONFIG.baseAccuracy
-        + accuracyUpgrades * ENDLESS_WAVE_CONFIG.accuracyUpgrade,
-    ),
-    normalHealth,
-    durabilityTier: durabilityUpgrades,
+    totalEnemies,
+    maximumAlive,
+    maximumShooters: attackerLimit.maximumShooters,
+    enemyRoster: createWaveEnemyRoster(waveNumber, totalEnemies),
+    maximumActiveByType: {
+      normal: maximumAlive,
+      armoured: maximumAlive,
+      smg: maximumAlive,
+      shotgun: waveNumber >= 19 ? 2 : 1,
+      sniper: 1,
+      boss: 1,
+    },
     playerRegenerationDelayMs: GAME_CONFIG.regeneration.delayMs,
-    roundsPerMinute: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.roundsPerMinute,
-      ENDLESS_WAVE_CONFIG.baseRoundsPerMinute
-        * ENDLESS_WAVE_CONFIG.fireRateUpgradeMultiplier ** fireRateUpgrades,
-    ),
     searchSeconds: 4,
     searchRadius: 4,
     perceptionMultiplier: 1,
-    aggressionMultiplier: 1,
-    replacementDelayMs: 650,
-    flankingEnabled: waveNumber >= ENDLESS_WAVE_CONFIG.flankingWave,
-    milestoneNotice: waveNumber % 10 === 0
-      ? MILESTONE_NOTICES[waveNumber]
-        ?? "Enemy variants reinforced"
-      : undefined,
+    replacementDelayMs: ENDLESS_WAVE_CONFIG.replacementDelayMs,
   };
-}
-
-export function getEnemyTypeForSpawn(
-  waveNumber: number,
-  spawnIndex: number,
-): EnemyType {
-  const wave = Math.max(1, Math.floor(waveNumber));
-  const index = Math.max(0, Math.floor(spawnIndex));
-
-  if (wave >= 80 && wave % 10 === 0 && index === 0) {
-    return "elite-sniper";
-  }
-  if (wave >= 70 && wave % 10 === 0 && index === (wave >= 80 ? 1 : 0)) {
-    return "boss";
-  }
-
-  const introducedType = milestoneTypeForWave(wave);
-  if (introducedType && index === 0) {
-    return introducedType;
-  }
-
-  const pool: EnemyType[] = ["rifle", "rifle", "rifle", "rifle"];
-  if (wave >= 20) pool.push("armoured");
-  if (wave >= 40) pool.push("smg", "smg");
-  if (wave >= 50) pool.push("heavy-rifle");
-  if (wave >= 60) pool.push("shotgun");
-  if (wave >= 80) pool.push("sniper");
-  return pool[(index + wave) % pool.length];
 }
 
 export function createEnemyArchetype(
-  type: EnemyType,
-  wave: WaveConfig,
+  type: EnemyType = "normal",
 ): EnemyArchetype {
-  const definition = ENEMY_ARCHETYPES[type];
-  const isFixedMilestoneHealth = (
-    (type === "armoured" && wave.number === 20)
-    || (type === "boss" && wave.number === 70)
-    || (type === "elite-sniper" && wave.number === 80)
-  );
-  const scaledHealth = definition.boss
-    ? definition.baseHealth + Math.max(0, wave.number - 70) * 2
-    : Math.max(
-        definition.baseHealth,
-        wave.normalHealth + definition.healthOffsetFromNormal,
-      );
-  const health = Math.min(
-    Number.MAX_SAFE_INTEGER,
-    isFixedMilestoneHealth ? definition.baseHealth : scaledHealth,
-  );
-
+  const archetype = ENEMY_ARCHETYPES[type];
   return {
-    ...definition,
-    type,
-    health,
-    movementMultiplier: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.movementMultiplier,
-      wave.movementMultiplier * definition.movementMultiplier,
-    ),
-    accuracy: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.accuracy,
-      Math.max(0, wave.effectiveAccuracy + definition.accuracyBonus),
-    ),
-    reactionSeconds: Math.max(
-      ENDLESS_WAVE_CONFIG.safetyCaps.reactionSeconds,
-      wave.reactionSeconds + definition.reactionTimeModifier,
-    ),
-    roundsPerMinute: Math.min(
-      ENDLESS_WAVE_CONFIG.safetyCaps.roundsPerMinute,
-      wave.roundsPerMinute * definition.weapon.roundsPerMinuteMultiplier,
-    ),
+    ...archetype,
+    collision: {
+      ...archetype.collision,
+    },
+    weapon: {
+      ...archetype.weapon,
+    },
   };
 }
 
-export function getEliteSniperDamage(maximumPlayerHealth: number) {
-  return Math.max(0, maximumPlayerHealth) * 0.95;
+export function isBossWave(waveNumber: number) {
+  return (
+    waveNumber >= ENDLESS_WAVE_CONFIG.bossFirstWave
+    && (
+      waveNumber - ENDLESS_WAVE_CONFIG.bossFirstWave
+    ) % ENDLESS_WAVE_CONFIG.bossWaveInterval === 0
+  );
 }
 
-export function getNormalEnemyDamageMultiplier(
-  durabilityTier: number,
-) {
-  const tier = Math.max(0, Math.floor(durabilityTier));
-  return 0.86 ** tier;
+export function countEnemyTypes(enemyTypes: readonly EnemyType[]) {
+  const counts: Record<EnemyType, number> = {
+    normal: 0,
+    armoured: 0,
+    smg: 0,
+    shotgun: 0,
+    sniper: 0,
+    boss: 0,
+  };
+  for (const enemyType of enemyTypes) {
+    counts[enemyType] += 1;
+  }
+  return counts;
 }
 
 export function selectAttackerIds(
@@ -470,36 +448,172 @@ export function selectAttackerIds(
     id: number;
     ready: boolean;
     distanceSquared: number;
+    enemyType: EnemyType;
   }>,
   maximumShooters: number,
 ) {
-  return candidates
+  const selected: typeof candidates = [];
+  const ordered = candidates
     .filter((candidate) => candidate.ready)
     .sort(
       (left, right) => left.distanceSquared - right.distanceSquared,
-    )
-    .slice(0, Math.max(0, Math.floor(maximumShooters)))
-    .map((candidate) => candidate.id);
+    );
+
+  for (const candidate of ordered) {
+    if (selected.length >= Math.max(0, Math.floor(maximumShooters))) {
+      break;
+    }
+    const conflictsWithSpecialAttacker = (
+      (
+        candidate.enemyType === "boss"
+        && selected.some(({ enemyType }) => enemyType === "sniper")
+      )
+      || (
+        candidate.enemyType === "sniper"
+        && selected.some(({ enemyType }) => enemyType === "boss")
+      )
+    );
+    if (!conflictsWithSpecialAttacker) {
+      selected.push(candidate);
+    }
+  }
+
+  return selected.map((candidate) => candidate.id);
 }
 
-function countCycleStep(waveNumber: number, stepWave: number) {
-  if (waveNumber < stepWave) return 0;
-  return (
-    Math.floor(
-      (waveNumber - stepWave) / ENDLESS_WAVE_CONFIG.upgradeCycleWaves,
-    )
-    + 1
+export function enemyDamageAtDistance(
+  archetype: EnemyArchetype,
+  playerMaximumHealth: number,
+  distance: number,
+) {
+  const baseDamage = archetype.weapon.maximumHealthDamageFraction > 0
+    ? Math.max(0, playerMaximumHealth)
+      * archetype.weapon.maximumHealthDamageFraction
+    : archetype.weapon.damagePerHit;
+  if (
+    archetype.weapon.kind !== "shotgun"
+    || distance <= archetype.weapon.damageFalloffStart
+  ) {
+    return baseDamage;
+  }
+  const falloffSpan = Math.max(
+    0.001,
+    archetype.weapon.range - archetype.weapon.damageFalloffStart,
+  );
+  const progress = Math.min(
+    1,
+    (distance - archetype.weapon.damageFalloffStart) / falloffSpan,
+  );
+  return baseDamage * (1 - progress * 0.8);
+}
+
+function createWaveEnemyRoster(
+  waveNumber: number,
+  totalEnemies: number,
+) {
+  const phase = ENEMY_INTRODUCTION.find(
+    (entry) => (
+      waveNumber >= entry.firstWave
+      && waveNumber <= entry.lastWave
+    ),
+  )!;
+  const weightedTypes = (
+    Object.entries(phase.weights) as Array<
+      [Exclude<EnemyType, "boss">, number]
+    >
+  ).filter(([, weight]) => weight > 0);
+  const allocations: Array<{
+    type: EnemyType;
+    order: number;
+    count: number;
+    remainder: number;
+  }> = weightedTypes.map(([type, weight], order) => {
+    const exact = totalEnemies * weight;
+    return {
+      type,
+      order,
+      count: Math.floor(exact),
+      remainder: exact - Math.floor(exact),
+    };
+  });
+  let allocated = allocations.reduce(
+    (total, allocation) => total + allocation.count,
+    0,
+  );
+  const remainderOrder = [...allocations].sort(
+    (left, right) => (
+      right.remainder - left.remainder
+      || left.order - right.order
+    ),
+  );
+  for (
+    let index = 0;
+    allocated < totalEnemies;
+    index = (index + 1) % remainderOrder.length
+  ) {
+    remainderOrder[index].count += 1;
+    allocated += 1;
+  }
+
+  if (isBossWave(waveNumber)) {
+    const normal = allocations.find(({ type }) => type === "normal");
+    if (normal && normal.count > 0) {
+      normal.count -= 1;
+      allocations.push({
+        type: "boss",
+        order: allocations.length,
+        count: 1,
+        remainder: 0,
+      });
+    }
+  }
+
+  const roster = allocations.flatMap(({ type, count }) => (
+    Array.from({ length: count }, () => type)
+  ));
+  return promoteIntroducedEnemyTypes(
+    deterministicShuffle(roster, waveNumber),
+    waveNumber,
   );
 }
 
-function milestoneTypeForWave(waveNumber: number): EnemyType | undefined {
-  if (waveNumber === 20) return "armoured";
-  if (waveNumber === 40) return "smg";
-  if (waveNumber === 50) return "heavy-rifle";
-  if (waveNumber === 60) return "shotgun";
-  if (waveNumber === 70) return "boss";
-  if (waveNumber === 80) return "elite-sniper";
-  return undefined;
+function deterministicShuffle<T>(values: T[], seed: number) {
+  let state = (seed * 2_654_435_761) >>> 0;
+  for (let index = values.length - 1; index > 0; index -= 1) {
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+    const swapIndex = state % (index + 1);
+    [values[index], values[swapIndex]] = [
+      values[swapIndex],
+      values[index],
+    ];
+  }
+  return values;
+}
+
+function promoteIntroducedEnemyTypes(
+  roster: EnemyType[],
+  waveNumber: number,
+) {
+  const priority: EnemyType[] = [];
+  if (isBossWave(waveNumber)) priority.push("boss");
+  if (waveNumber >= 13) priority.push("sniper");
+  if (waveNumber >= 10) priority.push("shotgun");
+  if (waveNumber >= 7) priority.push("smg");
+  if (waveNumber >= 4) priority.push("armoured");
+  priority.push("normal");
+
+  priority.forEach((enemyType, destinationIndex) => {
+    const sourceIndex = roster.findIndex(
+      (type, index) => (
+        index >= destinationIndex
+        && type === enemyType
+      ),
+    );
+    if (sourceIndex < 0) return;
+    const [selected] = roster.splice(sourceIndex, 1);
+    roster.splice(destinationIndex, 0, selected);
+  });
+  return roster;
 }
 
 export const WAVE_TRANSITION_SECONDS = 5;

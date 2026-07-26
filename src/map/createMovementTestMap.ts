@@ -137,5 +137,6 @@ export function createMovementTestMap(scene: Scene): MapData {
     playerSpawn: new Vector3(0, 1.7, -20),
     botSpawns: [],
     resourcePoints: [],
+    navigationNodes: [],
   };
 }

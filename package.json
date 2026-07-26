@@ -11,7 +11,11 @@
     "verify:jump": "node --experimental-strip-types scripts/verify-jump.mjs",
     "verify:props": "node --experimental-strip-types scripts/verify-pushable-props.mjs",
     "verify:combat": "node --experimental-strip-types scripts/verify-combat-balance.mjs",
+    "verify:bot-combat": "node scripts/verify-bot-combat-state.mjs",
     "verify:safe-zones": "node --experimental-strip-types scripts/verify-safe-zones.mjs",
+    "verify:navigation": "node --experimental-strip-types scripts/verify-navigation.mjs",
+    "verify:sniper": "node --experimental-strip-types scripts/verify-sniper-system.mjs",
+    "verify:effects": "node --experimental-strip-types scripts/verify-combat-effects.mjs",
     "verify:camera-look": "node --experimental-strip-types scripts/verify-camera-look.mjs",
     "verify:shops": "node --experimental-strip-types scripts/verify-shop-system.mjs"
   },

@@ -1,4 +1,5 @@
 import { Vector3 } from "@babylonjs/core";
+import type { EnemyType } from "../game/gameConfig";
 import type { BulletMaterial, SurfaceType } from "../map/createMap";
 
 type SoundKind = "enemyShot" | "hit" | "empty" | "damage" | "regenerate" | "result";
@@ -82,6 +83,116 @@ export class AudioManager {
     this.playTone(frequency, duration, type, gain, position);
   }
 
+  playEnemyAttack(enemyType: EnemyType, position: Vector3) {
+    if (!this.canPlay() || !this.context) {
+      return;
+    }
+    const now = this.context.currentTime;
+    switch (enemyType) {
+      case "normal":
+      case "armoured":
+        this.playNoiseBurst(
+          0.045,
+          1_800,
+          "bandpass",
+          0.12,
+          now,
+          position,
+        );
+        this.playFrequencySweepAt(
+          105,
+          62,
+          0.12,
+          0.16,
+          "sawtooth",
+          now,
+          position,
+        );
+        break;
+      case "smg":
+        this.playNoiseBurst(
+          0.025,
+          2_700,
+          "highpass",
+          0.1,
+          now,
+          position,
+        );
+        this.playTone(150, 0.055, "square", 0.09, position);
+        break;
+      case "shotgun":
+        this.playNoiseBurst(
+          0.11,
+          1_150,
+          "lowpass",
+          0.24,
+          now,
+          position,
+        );
+        this.playFrequencySweepAt(
+          74,
+          38,
+          0.22,
+          0.22,
+          "sawtooth",
+          now,
+          position,
+        );
+        break;
+      case "sniper":
+        this.playNoiseBurst(
+          0.075,
+          3_100,
+          "highpass",
+          0.25,
+          now,
+          position,
+        );
+        this.playFrequencySweepAt(
+          92,
+          32,
+          0.28,
+          0.25,
+          "square",
+          now,
+          position,
+        );
+        break;
+      case "boss":
+        this.playNoiseBurst(
+          0.12,
+          520,
+          "lowpass",
+          0.22,
+          now,
+          position,
+        );
+        this.playTone(48, 0.3, "sawtooth", 0.24, position);
+        break;
+    }
+  }
+
+  playEnemyWarning(enemyType: EnemyType, position: Vector3) {
+    if (
+      enemyType !== "sniper"
+      || !this.canPlay()
+      || !this.context
+    ) {
+      return;
+    }
+    const now = this.context.currentTime;
+    this.playTone(1_250, 0.12, "sine", 0.08, position);
+    this.playTone(1_780, 0.16, "sine", 0.06, position);
+    this.playNoiseBurst(
+      0.14,
+      3_400,
+      "highpass",
+      0.035,
+      now,
+      position,
+    );
+  }
+
   playFootstep(surface: SurfaceType) {
     if (!this.canPlay() || !this.context) {
       return;
@@ -156,6 +267,49 @@ export class AudioManager {
     const [frequency, duration, volume] = profile[stage];
     this.playNoiseBurst(duration, frequency * 2.5, "bandpass", volume * 0.7);
     this.playTone(frequency, duration, "triangle", volume);
+  }
+
+  playSniperShot(indoors: boolean) {
+    if (!this.canPlay() || !this.context) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    this.playNoiseBurst(0.055, 3400, "highpass", 0.42, now);
+    this.playFrequencySweep(82, 34, 0.2, 0.34, "sawtooth", now);
+    this.playTone(46, 0.24, "square", 0.2);
+    this.playNoiseBurst(
+      indoors ? 0.2 : 0.32,
+      indoors ? 1100 : 620,
+      "lowpass",
+      indoors ? 0.2 : 0.15,
+      now + 0.045,
+    );
+  }
+
+  playSniperImpact(position: Vector3) {
+    if (!this.canPlay() || !this.context) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    this.playNoiseBurst(
+      0.09,
+      1450,
+      "bandpass",
+      0.18,
+      now,
+      position,
+    );
+    this.playTone(118, 0.12, "triangle", 0.12, position);
+  }
+
+  playWeaponSwitch() {
+    if (!this.canPlay() || !this.context) {
+      return;
+    }
+    this.playNoiseBurst(0.07, 820, "bandpass", 0.08);
+    this.playTone(310, 0.06, "triangle", 0.07);
   }
 
   playImpact(material: BulletMaterial, position?: Vector3) {
@@ -245,6 +399,37 @@ export class AudioManager {
     gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
     oscillator.connect(gain);
     this.connectEffects(gain);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration);
+  }
+
+  private playFrequencySweepAt(
+    startFrequency: number,
+    endFrequency: number,
+    duration: number,
+    volume: number,
+    type: OscillatorType,
+    startTime: number,
+    position: Vector3,
+  ) {
+    if (!this.context || !this.effectsBus) {
+      return;
+    }
+    const oscillator = this.context.createOscillator();
+    const gain = this.context.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(startFrequency, startTime);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      endFrequency,
+      startTime + duration,
+    );
+    gain.gain.setValueAtTime(volume, startTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      startTime + duration,
+    );
+    oscillator.connect(gain);
+    this.connectEffects(gain, position);
     oscillator.start(startTime);
     oscillator.stop(startTime + duration);
   }

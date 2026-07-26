@@ -115,6 +115,12 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 .hud-readout b { font-size: 1.55rem; }
 .hud-bots { align-items: center; }
 .hud-ammo { align-items: flex-end; }
+.hud-ammo small {
+  color: rgba(219, 214, 199, 0.72);
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  margin-top: 0.12rem;
+}
 .hud-enemies { display: flex; gap: clamp(1.3rem, 5vw, 4.5rem); }
 
 .hud-coins {
@@ -165,7 +171,8 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 
 .scope-line,
 .scope-dot {
-  background: rgba(20, 24, 22, 0.86);
+  background: rgba(238, 246, 242, 0.94);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
   left: 50%;
   position: absolute;
   top: 50%;
@@ -175,27 +182,8 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
 .scope-line--horizontal { height: 1px; width: 42%; }
 .scope-line--vertical { height: 42%; width: 1px; }
 .scope-dot { border-radius: 50%; height: 4px; width: 4px; }
-.is-aiming .scope-overlay { opacity: 1; }
-.is-aiming .crosshair { opacity: 0; }
-
-#feedback { bottom: 6rem; color: #ede7d8; font-size: 0.72rem; font-weight: 800; left: 50%; letter-spacing: 0.08em; position: absolute; text-shadow: 0 2px 6px #000; transform: translateX(-50%); }
-
-.milestone-notice {
-  background: rgba(8, 14, 14, 0.82);
-  border-left: 2px solid rgba(215, 185, 104, 0.82);
-  color: #e5dcc1;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  max-width: min(280px, calc(100vw - 2rem));
-  padding: 0.65rem 0.8rem;
-  position: absolute;
-  right: 2rem;
-  text-transform: uppercase;
-  top: 5rem;
-}
-
-.milestone-notice[hidden] { display: none; }
+.is-scoped .scope-overlay { opacity: 1; }
+.is-scoped .crosshair { opacity: 0; }
 
 #enemy-indicators {
   inset: 0;
@@ -203,29 +191,36 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
   position: absolute;
 }
 
-.enemy-indicator {
+.enemy-location-indicator {
   align-items: center;
-  color: #f2d88e;
   display: flex;
-  filter: drop-shadow(0 2px 4px #000);
   flex-direction: column;
-  font-size: 0.56rem;
-  gap: 0.08rem;
-  letter-spacing: 0.05em;
+  gap: 0.2rem;
+  opacity: 0.72;
   position: absolute;
-  text-transform: uppercase;
   transform: translate(-50%, -50%);
 }
 
-.enemy-indicator span {
-  color: rgba(255, 114, 78, 0.9);
-  display: block;
-  font-size: 0.8rem;
-  line-height: 1;
+.enemy-location-indicator i {
+  border: 1px solid rgba(231, 108, 82, 0.92);
+  height: 0.48rem;
+  transform: rotate(45deg);
+  width: 0.48rem;
 }
 
-.enemy-indicator b { font-size: 0.56rem; }
-.enemy-indicator small { color: #d2cec2; font-size: 0.52rem; }
+.enemy-location-indicator b {
+  color: rgba(255, 222, 210, 0.9);
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 4px #000;
+}
+
+.enemy-location-indicator.is-edge i {
+  background: rgba(213, 75, 55, 0.3);
+}
+
+#feedback { bottom: 6rem; color: #ede7d8; font-size: 0.72rem; font-weight: 800; left: 50%; letter-spacing: 0.08em; position: absolute; text-shadow: 0 2px 6px #000; transform: translateX(-50%); }
+
 
 .shop-prompt {
   background: rgba(6, 18, 17, 0.9);
@@ -482,7 +477,6 @@ h2 { font-size: clamp(2rem, 5vw, 3.8rem); }
   .hud-readout b { font-size: 1.25rem; }
   .hud-enemies { gap: 1rem; }
   .hud-coins { right: 1rem; top: 1rem; }
-  .milestone-notice { right: 1rem; top: 4.5rem; }
   .result { max-height: calc(100vh - 2rem); overflow-y: auto; padding: 1.75rem; }
   .result-actions { flex-direction: column; }
   .shop-header,

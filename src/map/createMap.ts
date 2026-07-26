@@ -9,7 +9,10 @@ import {
   Texture,
   Vector3,
 } from "@babylonjs/core";
-import { COMPACT_MAP_LAYOUT } from "./mapLayout";
+import {
+  COMPACT_MAP_LAYOUT,
+  type NavigationNodeDefinition,
+} from "./mapLayout";
 import {
   DISTRICT_SIZE,
   SAFE_ZONES,
@@ -36,6 +39,7 @@ export interface MapData {
   playerSpawn: Vector3;
   botSpawns: Vector3[];
   resourcePoints: Vector3[];
+  navigationNodes: readonly NavigationNodeDefinition[];
   decorativeMeshes: Mesh[];
   pushableProps: PushablePropDefinition[];
 }
@@ -166,14 +170,10 @@ export function createMap(scene: Scene): MapData {
     pushableProps: [],
     playerSpawn: pointToVector(COMPACT_MAP_LAYOUT.playerSpawn),
     botSpawns: COMPACT_MAP_LAYOUT.botSpawns.map(pointToVector),
-    resourcePoints: [
-      new Vector3(-13, 1, 0),
-      new Vector3(-6, 1, 6),
-      new Vector3(1, 1, -8),
-      new Vector3(8, 3.7, 5),
-      new Vector3(8, 3.7, 13),
-      new Vector3(14, 1, 0),
-    ],
+    resourcePoints: COMPACT_MAP_LAYOUT.navigationNodes.map(
+      (node) => pointToVector(node.position),
+    ),
+    navigationNodes: COMPACT_MAP_LAYOUT.navigationNodes,
   };
 }
 
@@ -263,6 +263,21 @@ function createCargoCombatArea(
       position: new Vector3(-14, 0.65, 13),
       rotation: Math.PI / 2,
     },
+    {
+      name: "cargo southeast waist cover",
+      position: new Vector3(5, 0.65, -9),
+      rotation: Math.PI / 2,
+    },
+    {
+      name: "platform center waist cover",
+      position: new Vector3(12.5, 0.65, 0),
+      rotation: 0,
+    },
+    {
+      name: "platform north waist cover",
+      position: new Vector3(14, 0.65, 9),
+      rotation: Math.PI / 2,
+    },
   ].forEach((barrier) => {
     const mesh = solid(
       barrier.name,
@@ -271,6 +286,58 @@ function createCargoCombatArea(
       materials.concrete,
     );
     mesh.rotation.y = barrier.rotation;
+  });
+
+  [
+    {
+      name: "west cargo short wall",
+      position: new Vector3(-13.5, 1.05, -8),
+      size: [0.7, 2.1, 4.2] as [number, number, number],
+    },
+    {
+      name: "central cargo short wall",
+      position: new Vector3(-3.5, 1.05, -5),
+      size: [4.2, 2.1, 0.7] as [number, number, number],
+    },
+    {
+      name: "east approach short wall",
+      position: new Vector3(16, 1.05, -6),
+      size: [0.7, 2.1, 3.6] as [number, number, number],
+    },
+  ].forEach((wall) => {
+    solid(
+      wall.name,
+      wall.position,
+      wall.size,
+      materials.darkConcrete,
+    );
+  });
+
+  [
+    [-10.5, -14.5],
+    [-16, -7],
+    [-7, 1.5],
+    [-11, 15.5],
+    [6, -12.5],
+    [15.5, 16],
+  ].forEach(([x, z], clusterIndex) => {
+    [
+      [-0.55, 0, 1.05],
+      [0.55, 0.18, 0.78],
+      [0, 0.1, 0.9],
+    ].forEach(([offsetX, offsetZ, height], crateIndex) => {
+      solid(
+        `cargo crate ${clusterIndex}-${crateIndex}`,
+        new Vector3(
+          x + offsetX,
+          height / 2,
+          z + offsetZ,
+        ),
+        [0.9, height, 0.9],
+        materials.crateWood,
+        { bulletMaterial: "wood" },
+      );
+    });
   });
 }
 
@@ -356,35 +423,36 @@ function createElevatedCombatArea(
   walkableSurfaces: Mesh[],
   materials: ArenaMaterials,
 ) {
-  const [southTower, northTower] = COMPACT_MAP_LAYOUT.elevatedPlatforms;
+  const [platform] = COMPACT_MAP_LAYOUT.elevatedPlatforms;
+  const deck = solid(
+    `${platform.id} raised deck`,
+    new Vector3(
+      platform.center.x,
+      platform.center.y,
+      platform.center.z,
+    ),
+    [platform.width, 0.45, platform.depth],
+    materials.steel,
+    {
+      bulletMaterial: "metal",
+      surfaceType: "metal",
+    },
+  );
+  walkableSurfaces.push(deck);
 
-  for (const tower of COMPACT_MAP_LAYOUT.elevatedPlatforms) {
-    const deck = solid(
-      `${tower.id} raised deck`,
-      new Vector3(tower.center.x, tower.center.y, tower.center.z),
-      [tower.width, 0.45, tower.depth],
-      materials.steel,
-      {
-        bulletMaterial: "metal",
-        surfaceType: "metal",
-      },
-    );
-    walkableSurfaces.push(deck);
-
-    for (const x of [-1, 1]) {
-      for (const z of [-1, 1]) {
-        solid(
-          `${tower.id} support ${x}-${z}`,
-          new Vector3(
-            tower.center.x + x * (tower.width / 2 - 0.45),
-            tower.center.y / 2,
-            tower.center.z + z * (tower.depth / 2 - 0.45),
-          ),
-          [0.42, tower.center.y, 0.42],
-          materials.rustedSteel,
-          { bulletMaterial: "metal" },
-        );
-      }
+  for (const x of [-1, 1]) {
+    for (const z of [-1, 1]) {
+      solid(
+        `${platform.id} support ${x}-${z}`,
+        new Vector3(
+          platform.center.x + x * (platform.width / 2 - 0.55),
+          platform.center.y / 2,
+          platform.center.z + z * (platform.depth / 2 - 0.55),
+        ),
+        [0.48, platform.center.y, 0.48],
+        materials.rustedSteel,
+        { bulletMaterial: "metal" },
+      );
     }
   }
 
@@ -393,12 +461,12 @@ function createElevatedCombatArea(
     cover,
     walkableSurfaces,
     materials,
-    "south tower broad ramp",
+    "command platform south ramp",
     new Vector3(8, 0.2, -2.5),
     new Vector3(
-      southTower.center.x,
-      southTower.center.y,
-      southTower.center.z - southTower.depth / 2,
+      platform.center.x,
+      platform.center.y,
+      platform.center.z - platform.depth / 2,
     ),
   );
   createRamp(
@@ -406,44 +474,41 @@ function createElevatedCombatArea(
     cover,
     walkableSurfaces,
     materials,
-    "north tower east ramp",
-    new Vector3(16.5, 0.2, 13),
+    "command platform west ramp",
+    new Vector3(0.5, 0.2, 5),
     new Vector3(
-      northTower.center.x + northTower.width / 2,
-      northTower.center.y,
-      northTower.center.z,
+      platform.center.x - platform.width / 2,
+      platform.center.y,
+      platform.center.z,
     ),
   );
-  createBridge(
-    scene,
-    cover,
-    walkableSurfaces,
-    materials,
-    "connected tower bridge",
-    new Vector3(
-      southTower.center.x,
-      southTower.center.y,
-      southTower.center.z + southTower.depth / 2,
-    ),
-    new Vector3(
-      northTower.center.x,
-      northTower.center.y,
-      northTower.center.z - northTower.depth / 2,
-    ),
-  );
-
-  createTowerRailings(solid, materials);
+  createCommandPlatformRailings(solid, materials);
 
   [
     {
-      name: "tower approach cover south",
+      name: "platform approach cover south",
       position: new Vector3(14, 0.8, -4),
       size: [2.4, 1.6, 1.2] as [number, number, number],
     },
     {
-      name: "tower approach cover east",
+      name: "platform approach cover east",
       position: new Vector3(15, 0.8, 5),
       size: [1.2, 1.6, 2.8] as [number, number, number],
+    },
+    {
+      name: "north yard concrete cover",
+      position: new Vector3(8, 0.65, 12),
+      size: [3.2, 1.3, 0.7] as [number, number, number],
+    },
+    {
+      name: "northeast short barrier",
+      position: new Vector3(15, 0.65, 11),
+      size: [0.7, 1.3, 3.2] as [number, number, number],
+    },
+    {
+      name: "central west short barrier",
+      position: new Vector3(0, 0.65, 7.5),
+      size: [3.2, 1.3, 0.7] as [number, number, number],
     },
   ].forEach((coverDefinition) => {
     solid(
@@ -451,6 +516,27 @@ function createElevatedCombatArea(
       coverDefinition.position,
       coverDefinition.size,
       materials.darkConcrete,
+    );
+  });
+
+  [
+    {
+      name: "north yard generator",
+      position: new Vector3(11.5, 0.9, 10.5),
+      size: [2.4, 1.8, 1.5] as [number, number, number],
+    },
+    {
+      name: "east yard equipment cabinet",
+      position: new Vector3(16, 1.1, -1.5),
+      size: [1.2, 2.2, 1.2] as [number, number, number],
+    },
+  ].forEach((prop) => {
+    solid(
+      prop.name,
+      prop.position,
+      prop.size,
+      materials.rustedSteel,
+      { bulletMaterial: "metal" },
     );
   });
 }
@@ -487,32 +573,6 @@ function createRamp(
   walkableSurfaces.push(ramp);
 }
 
-function createBridge(
-  scene: Scene,
-  cover: Mesh[],
-  walkableSurfaces: Mesh[],
-  materials: ArenaMaterials,
-  name: string,
-  start: Vector3,
-  end: Vector3,
-) {
-  const difference = end.subtract(start);
-  const bridge = MeshBuilder.CreateBox(
-    name,
-    {
-      width: 3,
-      height: 0.36,
-      depth: Math.hypot(difference.x, difference.z),
-    },
-    scene,
-  );
-  bridge.position.copyFrom(start.add(end).scale(0.5));
-  bridge.rotation.y = Math.atan2(difference.x, difference.z);
-  configureWalkableMetal(bridge, materials.steel);
-  cover.push(bridge);
-  walkableSurfaces.push(bridge);
-}
-
 function configureWalkableMetal(mesh: Mesh, material: PBRMaterial) {
   mesh.material = material;
   mesh.checkCollisions = true;
@@ -521,26 +581,24 @@ function configureWalkableMetal(mesh: Mesh, material: PBRMaterial) {
   mesh.metadata = {
     bulletMaterial: "metal" satisfies BulletMaterial,
     collisionCategory: "solid-cover",
-    collisionShape: "ramp-or-bridge",
+    collisionShape: "walkable-incline",
     physicsCategory: "solid",
     supportsGrounding: true,
     surfaceType: "metal" satisfies SurfaceType,
   };
 }
 
-function createTowerRailings(
+function createCommandPlatformRailings(
   solid: SolidBuilder,
   materials: ArenaMaterials,
 ) {
   const railings = [
-    ["south tower west rail", 4.6, 5, 0.16, 5.8],
-    ["south tower east rail", 11.4, 5, 0.16, 5.8],
-    ["south tower south left rail", 5.5, 1.6, 2.2, 0.16],
-    ["south tower south right rail", 10.5, 1.6, 2.2, 0.16],
-    ["north tower west rail", 4.6, 13, 0.16, 4.2],
-    ["north tower north rail", 8, 15.4, 6.8, 0.16],
-    ["north tower south left rail", 5.5, 10.6, 2.2, 0.16],
-    ["north tower south right rail", 10.5, 10.6, 2.2, 0.16],
+    ["command platform west north rail", 4.1, 7.4, 0.16, 1.6],
+    ["command platform west south rail", 4.1, 2.6, 0.16, 1.6],
+    ["command platform east rail", 11.9, 5, 0.16, 6.4],
+    ["command platform north rail", 8, 8.4, 7.6, 0.16],
+    ["command platform south left rail", 5.4, 1.6, 2.4, 0.16],
+    ["command platform south right rail", 10.6, 1.6, 2.4, 0.16],
   ] as const;
 
   railings.forEach(([name, x, z, width, depth]) => {
@@ -739,6 +797,12 @@ function createArenaMaterials(scene: Scene) {
     new Color3(0.12, 0.14, 0.13),
     "steel",
   );
+  const crateWood = material(
+    scene,
+    "dark cargo crate timber",
+    new Color3(0.3, 0.19, 0.1),
+    "wood",
+  );
 
   return {
     asphalt,
@@ -750,6 +814,7 @@ function createArenaMaterials(scene: Scene) {
     containerRed,
     containerOlive,
     containerFrame,
+    crateWood,
   };
 }
 
@@ -781,7 +846,7 @@ function material(
   scene: Scene,
   name: string,
   color: Color3,
-  surface: "asphalt" | "concrete" | "steel",
+  surface: "asphalt" | "concrete" | "steel" | "wood",
 ) {
   const result = new PBRMaterial(name, scene);
   result.albedoColor = color;

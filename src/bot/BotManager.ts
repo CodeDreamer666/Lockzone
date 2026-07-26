@@ -6,17 +6,18 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import {
-  getEnemyTypeForSpawn,
   selectAttackerIds,
+  type EnemyType,
   type WaveConfig,
 } from "../game/gameConfig";
 import { isInsideSafeZone } from "../map/safeZones";
+import type { NavigationNodeDefinition } from "../map/mapLayout";
 import { BotController } from "./BotController";
 
 const MINIMUM_SPAWN_DISTANCE = 12;
 const VIEW_CONE_COSINE = Math.cos(50 * Math.PI / 180);
 const INITIAL_SPAWN_DELAY_MS = 240;
-const CORPSE_LIFETIME_MS = 900;
+const CORPSE_LIFETIME_MS = 5_000;
 
 /** Coordinates wave population, safe spawning, shared perception, and model reuse. */
 export class BotManager {
@@ -26,6 +27,7 @@ export class BotManager {
   private readonly recentlyUsedSpawns: number[] = [];
   private readonly defeatedAt = new Map<BotController, number>();
   private wave?: WaveConfig;
+  private enemyQueue: EnemyType[] = [];
   private lastGunshot?: { position: Vector3; time: number };
   private nextSpawnAt = Infinity;
   private spawnedCount = 0;
@@ -34,6 +36,7 @@ export class BotManager {
   private nextBotId = 0;
   private waveActive = false;
   private activeShooterCount = 0;
+  private activeShooterIds: number[] = [];
 
   constructor(
     private readonly scene: Scene,
@@ -41,6 +44,7 @@ export class BotManager {
     private readonly ground: AbstractMesh[],
     spawns: Vector3[],
     resourcePoints: Vector3[],
+    private readonly navigationNodes: readonly NavigationNodeDefinition[],
     private readonly onBotDefeated: (bot: BotController) => void,
   ) {
     this.spawnPoints = spawns.map(
@@ -56,6 +60,10 @@ export class BotManager {
     return this.bots.filter((bot) => bot.isAlive).length;
   }
 
+  get deadBodies() {
+    return this.bots.filter((bot) => !bot.isAlive).length;
+  }
+
   get defeated() {
     return this.defeatedCount;
   }
@@ -68,11 +76,12 @@ export class BotManager {
     return this.activeShooterCount;
   }
 
+  get shooterIds() {
+    return [...this.activeShooterIds];
+  }
+
   get waitingToSpawn() {
-    return Math.max(
-      0,
-      (this.wave?.totalEnemies ?? 0) - this.spawnedCount,
-    );
+    return this.enemyQueue.length;
   }
 
   get remaining() {
@@ -95,21 +104,16 @@ export class BotManager {
       .map((bot) => bot.debugSummary);
   }
 
-  get remainingEnemyLocations() {
-    if (
-      !this.waveActive
-      || this.remaining === 0
-      || this.remaining > 5
-    ) {
-      return [];
-    }
+  get combatDebugBots() {
     return this.bots
       .filter((bot) => bot.isAlive)
-      .map((bot) => ({
-        id: bot.id,
-        label: bot.locationLabel,
-        position: bot.mesh.position.clone(),
-      }));
+      .map((bot) => bot.combatDebugSnapshot);
+  }
+
+  get livingEnemyTypes() {
+    return this.bots
+      .filter((bot) => bot.isAlive)
+      .map((bot) => bot.enemyType);
   }
 
   async loadModels() {
@@ -121,6 +125,7 @@ export class BotManager {
   startWave(config: WaveConfig, now: number) {
     this.clearBots();
     this.wave = config;
+    this.enemyQueue = [...config.enemyRoster];
     this.spawnedCount = 0;
     this.defeatedCount = 0;
     this.elevatedSpawnedCount = 0;
@@ -128,8 +133,8 @@ export class BotManager {
     this.nextSpawnAt = now;
     this.waveActive = true;
     this.activeShooterCount = 0;
+    this.activeShooterIds = [];
     this.lastGunshot = undefined;
-    this.activeShooterCount = 0;
     this.recentlyUsedSpawns.length = 0;
   }
 
@@ -147,19 +152,45 @@ export class BotManager {
     playerViewDirection: Vector3,
     playerTarget: Mesh,
     playerSpeed: number,
-    maximumPlayerHealth: number,
+    playerMaximumHealth: number,
     onBotShot: (bot: BotController, origin: Vector3, direction: Vector3) => void,
+    onBotWarning: (bot: BotController) => void,
     onPlayerHit: (damage: number) => void,
     onBotFootstep: (position: Vector3) => void,
   ) {
     if (!this.waveActive || !this.wave) return;
     this.removeExpiredCorpses(now);
     this.trySpawn(now, playerPosition, playerViewDirection);
+    const sharedContext = {
+      now,
+      dt,
+      playerPosition,
+      playerTarget,
+      playerSpeed,
+      playerMaximumHealth,
+      cover: this.cover,
+      ground: this.ground,
+      patrolPoints: this.patrolPoints,
+      navigationNodes: this.navigationNodes,
+      teammates: this.bots,
+      lastGunshot: this.lastGunshot,
+      onShot: onBotShot,
+      onWarning: onBotWarning,
+      onHitPlayer: onPlayerHit,
+      onFootstep: onBotFootstep,
+    };
+    for (const bot of this.bots) {
+      bot.prepareCombat({
+        ...sharedContext,
+        canShoot: false,
+      });
+    }
     const shooterIds = new Set(
       selectAttackerIds(
         this.bots.map((bot) => ({
           id: bot.id,
           ready: bot.wantsAttackSlot(now),
+          enemyType: bot.enemyType,
           distanceSquared: Vector3.DistanceSquared(
             bot.mesh.position,
             playerPosition,
@@ -169,37 +200,40 @@ export class BotManager {
       ),
     );
     this.activeShooterCount = shooterIds.size;
+    this.activeShooterIds = [...shooterIds];
     for (const bot of this.bots) {
       bot.update({
-        now,
-        dt,
-        playerPosition,
-        playerTarget,
-        playerSpeed,
-        maximumPlayerHealth,
+        ...sharedContext,
         canShoot: shooterIds.has(bot.id),
-        cover: this.cover,
-        ground: this.ground,
-        patrolPoints: this.patrolPoints,
-        teammates: this.bots,
-        lastGunshot: this.lastGunshot,
-        onShot: onBotShot,
-        onHitPlayer: onPlayerHit,
-        onFootstep: onBotFootstep,
       });
     }
+    this.activeShooterIds = this.bots
+      .filter((bot) => bot.combatDebugSnapshot.ownsAttackSlot)
+      .map((bot) => bot.id);
+    this.activeShooterCount = this.activeShooterIds.length;
   }
 
-  damageBot(bot: BotController, amount: number, now: number) {
+  damageBot(
+    bot: BotController,
+    amount: number,
+    now: number,
+    impactDirection = Vector3.Zero(),
+    oneShotNormal = false,
+  ) {
     if (!this.waveActive || !this.bots.includes(bot)) return false;
-    const defeated = bot.takeDamage(amount, now);
+    const defeated = bot.takeDamage(
+      amount,
+      now,
+      impactDirection,
+      oneShotNormal,
+    );
     if (!defeated) return false;
     this.defeatedCount += 1;
     this.defeatedAt.set(bot, now);
     this.onBotDefeated(bot);
     if (
       this.wave
-      && this.spawnedCount < this.wave.totalEnemies
+      && this.enemyQueue.length > 0
       && !Number.isFinite(this.nextSpawnAt)
     ) {
       this.nextSpawnAt = now + this.wave.replacementDelayMs;
@@ -215,18 +249,6 @@ export class BotManager {
       this.damageBot(bot, bot.health, now);
     });
     return activeBots.length;
-  }
-
-  prepareFinalEnemiesForTest(now: number, remainingEnemies = 5) {
-    if (!this.waveActive || !this.wave) return;
-    const remaining = Math.max(
-      0,
-      Math.min(this.wave.totalEnemies, Math.floor(remainingEnemies)),
-    );
-    this.clearBots();
-    this.defeatedCount = this.wave.totalEnemies - remaining;
-    this.spawnedCount = this.defeatedCount;
-    this.nextSpawnAt = now;
   }
 
   reportPlayerGunshot(position: Vector3, time: number) {
@@ -256,8 +278,13 @@ export class BotManager {
       !this.wave
       || now < this.nextSpawnAt
       || this.alive >= this.wave.maximumAlive
-      || this.spawnedCount >= this.wave.totalEnemies
+      || this.enemyQueue.length === 0
     ) {
+      return;
+    }
+    const queueIndex = this.findSpawnableEnemyIndex();
+    if (queueIndex < 0) {
+      this.nextSpawnAt = now + 250;
       return;
     }
     const spawn = this.chooseSpawn(
@@ -268,10 +295,11 @@ export class BotManager {
       this.nextSpawnAt = now + 300;
       return;
     }
-    this.spawnBot(spawn);
+    const [enemyType] = this.enemyQueue.splice(queueIndex, 1);
+    this.spawnBot(spawn, enemyType);
     const needsAnother = (
       this.alive < this.wave.maximumAlive
-      && this.spawnedCount < this.wave.totalEnemies
+      && this.enemyQueue.length > 0
     );
     if (!needsAnother) {
       this.nextSpawnAt = Infinity;
@@ -387,7 +415,33 @@ export class BotManager {
     });
   }
 
-  private spawnBot(spawn: Vector3) {
+  private findSpawnableEnemyIndex() {
+    if (!this.wave) return -1;
+    const livingCounts = this.bots
+      .filter((bot) => bot.isAlive)
+      .reduce<Record<EnemyType, number>>(
+        (counts, bot) => {
+          counts[bot.enemyType] += 1;
+          return counts;
+        },
+        {
+          normal: 0,
+          armoured: 0,
+          smg: 0,
+          shotgun: 0,
+          sniper: 0,
+          boss: 0,
+        },
+      );
+    return this.enemyQueue.findIndex(
+      (enemyType) => (
+        livingCounts[enemyType]
+        < this.wave!.maximumActiveByType[enemyType]
+      ),
+    );
+  }
+
+  private spawnBot(spawn: Vector3, enemyType: EnemyType) {
     if (!this.wave) return;
     const groundedSpawn = spawn.clone();
     const groundProbe = this.scene.pickWithRay(
@@ -395,17 +449,14 @@ export class BotManager {
       (mesh) => this.ground.includes(mesh),
     );
     if (groundProbe?.pickedPoint) {
-      groundedSpawn.y = groundProbe.pickedPoint.y + 1.3;
+      groundedSpawn.y = groundProbe.pickedPoint.y;
     }
     const bot = new BotController(
       this.scene,
       groundedSpawn,
       this.nextBotId,
       this.wave,
-      getEnemyTypeForSpawn(
-        this.wave.number,
-        this.spawnedCount,
-      ),
+      enemyType,
     );
     this.bots.push(bot);
     this.nextBotId += 1;
@@ -426,7 +477,10 @@ export class BotManager {
   private clearBots() {
     this.bots.forEach((bot) => bot.dispose());
     this.bots.length = 0;
+    this.enemyQueue = [];
     this.defeatedAt.clear();
+    this.activeShooterCount = 0;
+    this.activeShooterIds = [];
   }
 
   private createPatrolPoints(

@@ -43,12 +43,16 @@ try {
   let state = createInitialShopState();
   assert.equal(state.coins, 0, "a new run starts with no coins");
   assert.deepEqual(COIN_REWARDS, {
-    normalKill: 10,
     headshotBonus: 2,
     waveComplete: 25,
   });
-  assert.equal(getBotKillCoinReward(false), 10);
-  assert.equal(getBotKillCoinReward(true), 12);
+  assert.equal(getBotKillCoinReward("normal", false), 10);
+  assert.equal(getBotKillCoinReward("normal", true), 12);
+  assert.equal(getBotKillCoinReward("smg", false), 12);
+  assert.equal(getBotKillCoinReward("armoured", false), 20);
+  assert.equal(getBotKillCoinReward("shotgun", false), 20);
+  assert.equal(getBotKillCoinReward("sniper", false), 25);
+  assert.equal(getBotKillCoinReward("boss", false), 100);
   assert.equal(getShopPrice(state, "movement-10"), 140);
   assert.equal(getShopPrice(state, "health-10"), 75);
   assert.equal(getShopPrice(state, "rifle-damage-10"), 125);
